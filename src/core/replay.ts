@@ -1,0 +1,83 @@
+import type { ForgeMindEvent } from "./events.js";
+import type { RunStatus, StageId } from "./types.js";
+
+export interface TimelineEntry {
+  readonly seq: number;
+  readonly type: string;
+  readonly stage: StageId | null;
+  readonly detail: string;
+}
+
+export interface Timeline {
+  readonly runId: string;
+  readonly status: RunStatus | "RUNNING";
+  readonly requirement: string;
+  readonly entries: readonly TimelineEntry[];
+}
+
+export function replay(events: readonly ForgeMindEvent[]): Timeline {
+  const ordered = [...events].sort((a, b) => a.seq - b.seq);
+  let runId = "unknown";
+  let requirement = "";
+  let status: Timeline["status"] = "RUNNING";
+
+  const entries = ordered.map((event): TimelineEntry => {
+    const data = event.data as Record<string, unknown>;
+    if (typeof data["runId"] === "string") runId = data["runId"];
+    if (event.type === "run.started") requirement = event.data.requirement;
+    if (event.type === "run.finished") status = event.data.status;
+    return {
+      seq: event.seq,
+      type: event.type,
+      stage: isStage(data["stage"]) ? data["stage"] : null,
+      detail: describe(event),
+    };
+  });
+
+  return { runId, status, requirement, entries };
+}
+
+function isStage(value: unknown): value is StageId {
+  return (
+    value === "PLAN" ||
+    value === "ARCH" ||
+    value === "CODE" ||
+    value === "REVIEW" ||
+    value === "TEST" ||
+    value === "COMMIT"
+  );
+}
+
+function describe(event: ForgeMindEvent): string {
+  switch (event.type) {
+    case "run.started":
+      return `Run started on ${event.data.branch}`;
+    case "stage.started":
+      return `Attempt ${event.data.attempt} started`;
+    case "llm.called":
+      return `${event.data.model}: ${event.data.inputTokens} input / ${event.data.outputTokens} output tokens`;
+    case "tool.called":
+      return `${event.data.tool}: ${toolSucceeded(event.data.result) ? "ok" : "failed"}`;
+    case "artifact.produced":
+      return `${event.data.kind}: ${event.data.path}`;
+    case "gate.rejected":
+      return `Rejected: ${event.data.reason}`;
+    case "gate.passed":
+      return `Passed: ${event.data.evidence}`;
+    case "stage.completed":
+      return event.data.status;
+    case "stage.failed":
+      return event.data.error;
+    case "run.finished":
+      return `${event.data.status}: ${event.data.summary}`;
+  }
+}
+
+function toolSucceeded(result: unknown): boolean {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "ok" in result &&
+    result.ok === true
+  );
+}

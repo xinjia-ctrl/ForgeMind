@@ -1,0 +1,31 @@
+{
+  "runId": "golden-run",
+  "status": "SUCCEEDED",
+  "requirement": "Add deterministic replay",
+  "entries": [
+    {
+      "seq": 1,
+      "type": "run.started",
+      "stage": null,
+      "detail": "Run started on forgemind/golden-run"
+    },
+    {
+      "seq": 2,
+      "type": "stage.started",
+      "stage": "PLAN",
+      "detail": "Attempt 1 started"
+    },
+    {
+      "seq": 3,
+      "type": "stage.completed",
+      "stage": "PLAN",
+      "detail": "SUCCEEDED"
+    },
+    {
+      "seq": 4,
+      "type": "run.finished",
+      "stage": null,
+      "detail": "SUCCEEDED: Complete"
+    }
+  ]
+}
