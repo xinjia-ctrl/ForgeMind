@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { EventLog } from "../core/event-log.js";
-import { errorMessage, StageFailure } from "../core/errors.js";
+import { classifyFailure, errorMessage, StageFailure } from "../core/errors.js";
 import { estimateTokens, TokenBudgetTracker } from "../core/token-budget.js";
 import type {
   AgentLifecycle,
@@ -75,6 +75,7 @@ export abstract class BaseAgent implements StageAgent {
         data: {
           runId: ctx.runId,
           stage: this.id,
+          kind: classifyFailure(error),
           error: errorMessage(error),
           ...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {}),
         },

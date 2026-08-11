@@ -92,6 +92,30 @@ it("reproduces the workflow sequence and gate decisions for identical input", as
   }
 });
 
+it("persists the runtime failure classification in stage events", async () => {
+  const repo = await createDemoRepository();
+  try {
+    const execution = await runForgeMind({
+      repoPath: repo,
+      requirement: "Expose provider failure",
+      provider: new FakeChatProvider([]),
+      model: "fake-model",
+      runId: "classified-failure",
+    });
+
+    assert.equal(execution.result.status, "FAILED");
+    const events = await EventLog.open(
+      path.dirname(execution.eventLogPath),
+      "classified-failure",
+    ).load();
+    const failure = events.find((event) => event.type === "stage.failed");
+    assert.ok(failure);
+    assert.equal(failure.data.kind, "STAGE");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 function createDemoProvider(): FakeChatProvider {
   return new FakeChatProvider([
     JSON.stringify({

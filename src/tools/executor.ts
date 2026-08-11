@@ -1,5 +1,6 @@
 import type { EventLog } from "../core/event-log.js";
 import type { StageId } from "../core/types.js";
+import { auditValue } from "./audit.js";
 import type { Tool, ToolPolicy, ToolResult } from "./types.js";
 
 export class ToolRegistry {
@@ -71,20 +72,4 @@ export class ScopedToolExecutor {
     });
     return result;
   }
-}
-
-function auditValue(value: unknown, key = ""): unknown {
-  if (/content|token|secret|password|api.?key/i.test(key)) {
-    if (typeof value === "string") return `<redacted:${Buffer.byteLength(value)} bytes>`;
-  }
-  if (typeof value === "string") {
-    return value.length > 2_000 ? `${value.slice(0, 2_000)}<truncated>` : value;
-  }
-  if (Array.isArray(value)) return value.map((item) => auditValue(item));
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([childKey, child]) => [childKey, auditValue(child, childKey)]),
-    );
-  }
-  return value;
 }

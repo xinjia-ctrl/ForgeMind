@@ -5,6 +5,7 @@ import { EventLog } from "../core/event-log.js";
 import { replay } from "../core/replay.js";
 import { workflowSignature } from "../core/reproducibility.js";
 import { OpenAICompatibleChatProvider } from "../llm/openai-compatible-provider.js";
+import { generateReport } from "../report/report.js";
 import { inspectGitWorkspace } from "./git-workspace.js";
 import { runForgeMind } from "./run.js";
 
@@ -33,12 +34,36 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       assertKnownOptions(parsed.values, ["repo", "run-id"]);
       return await replayCommand(parsed.values);
     }
+    if (parsed.command === "report") {
+      assertKnownOptions(parsed.values, ["repo", "run-id"]);
+      return await reportCommand(parsed.values);
+    }
     printHelp();
     return parsed.command === "help" ? 0 : 2;
   } catch (error) {
     process.stderr.write(`ForgeMind error: ${errorMessage(error)}\n`);
     return 1;
   }
+}
+
+async function reportCommand(values: ReadonlyMap<string, string>): Promise<number> {
+  const workspace = await inspectGitWorkspace(required(values, "repo"));
+  const runId = required(values, "run-id");
+  const report = await generateReport({ gitDirectory: workspace.gitDirectory, runId });
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        runId: report.viewModel.runId,
+        status: report.viewModel.status,
+        report: report.path,
+        eventCount: report.viewModel.totalEvents,
+        workflowSignature: report.viewModel.workflowSignature,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return 0;
 }
 
 async function runCommand(values: ReadonlyMap<string, string>): Promise<number> {
@@ -156,7 +181,7 @@ function assertKnownOptions(values: ReadonlyMap<string, string>, allowed: readon
 
 function printHelp(): void {
   process.stdout.write(
-    `ForgeMind\n\nUsage:\n  forge-mind run --repo <path> --requirement <text> [--model <name>] [--test-command <command>] [--max-rework <n>] [--skip-git-hooks]\n  forge-mind replay --repo <path> --run-id <id>\n\nEnvironment:\n  OPENAI_API_KEY      Required for run\n  OPENAI_BASE_URL     OpenAI-compatible API base URL\n  FORGEMIND_MODEL     Default model name\n`,
+    `ForgeMind\n\nUsage:\n  forge-mind run --repo <path> --requirement <text> [--model <name>] [--test-command <command>] [--max-rework <n>] [--skip-git-hooks]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n\nEnvironment:\n  OPENAI_API_KEY      Required for run\n  OPENAI_BASE_URL     OpenAI-compatible API base URL\n  FORGEMIND_MODEL     Default model name\n`,
   );
 }
 

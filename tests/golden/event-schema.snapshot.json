@@ -1,6 +1,6 @@
 {
   "runId": "golden-run",
-  "status": "SUCCEEDED",
+  "status": "FAILED",
   "requirement": "Add deterministic replay",
   "entries": [
     {
@@ -17,15 +17,15 @@
     },
     {
       "seq": 3,
-      "type": "stage.completed",
+      "type": "stage.failed",
       "stage": "PLAN",
-      "detail": "SUCCEEDED"
+      "detail": "Planning failed"
     },
     {
       "seq": 4,
       "type": "run.finished",
       "stage": null,
-      "detail": "SUCCEEDED: Complete"
+      "detail": "FAILED: Planning failed"
     }
   ]
 }

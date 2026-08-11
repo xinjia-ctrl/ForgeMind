@@ -1,7 +1,7 @@
 # ForgeMind 架构设计文档（ADR）
 
-> 版本：v0.2（对齐 PRD v0.2，MVP 已实现，23/23 测试通过）
-> 状态：评审中
+> 版本：v0.3（对齐 PRD v0.3，静态可观测性报告已实现，31/31 测试通过）
+> 状态：已实现
 > 技术栈：TypeScript / Node（>=22），单一进程、运行时零第三方依赖（无 DB / MQ / 框架）
 
 ---
@@ -25,7 +25,7 @@
 ## 2. 架构总览
 
 ```
-CLI (src/runtime/cli.ts: forge-mind run / forge-mind replay)
+CLI (src/runtime/cli.ts: forge-mind run / forge-mind replay / forge-mind report)
   │
   ▼
 runForgeMind (src/runtime/run.ts)
@@ -43,6 +43,7 @@ StageAgent (src/agents/*)  —— 单次 LLM 调用，返回结构化 StageOutpu
 EventLog (src/core/event-log.ts)  —— JSONL 持久化到 <git-dir>/forgemind/runs/<runId>.jsonl
   └→ replay (src/core/replay.ts)  —— 纯函数重建 Timeline
   └→ workflowSignature (src/core/reproducibility.ts) —— 规范化流程签名
+  └→ report (src/report/) —— events → view model → 单文件 HTML
 ```
 
 **事实流三条**：
@@ -65,9 +66,10 @@ src/
 ├── llm/        # ChatProvider 接口 + OpenAI 兼容 + Fake
 ├── memory/     # MemoryProvider 接口 + Noop
 ├── runtime/    # CLI、run 编排入口、Git 工作区、测试命令解析
+├── report/     # 事件投影、HTML 纯渲染、报告 IO 装配
 └── config/     # budgets.ts（每阶段 Token 预算）
 tests/
-├── unit/       # orchestrator / token-budget / path-safety / test-command / cli
+├── unit/       # orchestration / security / report view model + renderer / cli
 ├── golden/     # 事件 Schema 快照
 └── e2e/        # 真实 node --test + 真实 Git commit 全链路
 ```
@@ -101,7 +103,7 @@ EventLog 以 JSONL 落盘，事件形如 `{v:1, seq, ts, type, data}`，`EventDa
 | type                                                 | 关键 data                                                   | 用途           |
 | ---------------------------------------------------- | ----------------------------------------------------------- | -------------- |
 | `run.started` / `run.finished`                       | runId, requirement, branch / status, summary                | 运行边界       |
-| `stage.started` / `stage.completed` / `stage.failed` | stage, attempt / status / error, stack                      | 阶段生命周期   |
+| `stage.started` / `stage.completed` / `stage.failed` | stage, attempt / status / kind, error, stack                | 阶段生命周期   |
 | `llm.called`                                         | model, inputTokens, outputTokens, promptFingerprint(sha256) | 决策点 + 成本  |
 | `tool.called`                                        | tool, args, result, policy                                  | 审计（含脱敏） |
 | `artifact.produced`                                  | path, kind, summary                                         | 产物追溯       |
@@ -181,7 +183,7 @@ CREATED → RUNNING → SUCCEEDED | FAILED
 
 `read_file`、`write_file`（原子写：临时文件+rename）、`edit_file`（精确串匹配 + `expectedOccurrences` 计数校验）、`grep`、`glob`、`run_command`、`git_status`、`git_diff`（含未跟踪文件）、`git_commit`。
 
-工具不 throw（`errorMessage` 兜底转结构化 `ToolResult`），所有调用由 `ScopedToolExecutor` 统一记录 `tool.called` 并做**审计脱敏**（content/secret/password/api key 键值 → `<redacted>`）。
+工具不 throw（`errorMessage` 兜底转结构化 `ToolResult`），所有调用由 `ScopedToolExecutor` 统一记录 `tool.called` 并通过共享 `auditValue` 做**审计脱敏**（prompt/token/密钥、文件内容、diff、编辑片段和命令输出等键值 → `<redacted>`）。
 
 ### 7.2 ToolPolicy（deny-by-default，`src/tools/types.ts`）
 
@@ -208,7 +210,25 @@ CREATED → RUNNING → SUCCEEDED | FAILED
 
 ---
 
-## 8. Memory 设计（对齐 PRD：MVP 不做跨项目长期记忆）
+## 8. 静态可观测性报告（Phase 2 P0）
+
+`forge-mind report --repo <path> --run-id <id>` 从 JSONL 事件生成 `<git-dir>/forgemind/reports/<runId>.html`。报告是日志的只读投影，不参与运行状态决策：
+
+```
+EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) → atomic write
+       IO                    纯函数                     纯函数                 IO
+```
+
+- `src/report/view-model.ts`：复用 `workflowTrace`，按实际事件顺序和 stage/attempt 分组；聚合 token、工具次数、阶段耗时、门禁返工、产物和失败定位。
+- `src/report/render-html.ts`：生成内嵌 CSS/JavaScript 的单文件报告，提供时间线播放；所有动态文本统一 HTML 转义。
+- `src/report/report.ts`：唯一报告 IO 边界，负责加载日志并原子写入报告。
+- 阶段失败或缺少 `stage.completed` 时，耗时为 `null`；不基于相邻事件猜测。旧日志缺少 `stage.failed.kind` 时展示 `UNKNOWN`，不根据错误字符串推断。
+- 最多渲染 2,000 条事件；超限时抽样普通事件，并优先保留失败、门禁和失败工具调用。
+- 工具 `args/result` 在报告投影时再次调用共享 `auditValue`；CSP 禁止外部资源，报告可完全离线打开。
+
+---
+
+## 9. Memory 设计（对齐 PRD：MVP 不做跨项目长期记忆）
 
 | 类型             | MVP                      | 说明                          |
 | ---------------- | ------------------------ | ----------------------------- |
@@ -220,7 +240,7 @@ CREATED → RUNNING → SUCCEEDED | FAILED
 
 ---
 
-## 9. 安全边界（MVP 本地执行）
+## 10. 安全边界（MVP 本地执行）
 
 PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3。MVP 的本地执行边界是**明确让步**，通过以下措施收窄：
 
@@ -233,9 +253,9 @@ PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3�
 
 ---
 
-## 10. 工程质量
+## 11. 工程质量
 
-### 10.1 错误分类（`src/core/errors.ts`）
+### 11.1 错误分类（`src/core/errors.ts`）
 
 | 类型           | kind  | 含义                                   | Run 结果 |
 | -------------- | ----- | -------------------------------------- | -------- |
@@ -243,16 +263,18 @@ PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3�
 | `HardFailure`  | HARD  | 预算超限 / 权限 / 仓库不干净           | FAILED   |
 | `FatalFailure` | FATAL | 框架级（契约漂移、事件日志损坏）       | BLOCKED  |
 
-### 10.2 测试策略（23/23 通过，`npm test` = build + `node --test`）
+`BaseAgent` 在 `stage.failed` 写入分类；该字段保持可选以兼容 v0.2 日志。未分类的运行时异常按框架级 `FATAL` 处理，避免未知错误静默降级。
 
-- **单元**：Orchestrator 状态机（返工/超限/只读上下文不可变）、TokenBudgetTracker、UTF-8 字节截断、路径与 symlink 安全、Git hooks 策略、测试命令策略、CLI 校验 —— 全部注入 `FakeChatProvider` 保证确定性。
+### 11.2 测试策略（31/31 通过，`npm test` = build + `node --test`）
+
+- **单元**：Orchestrator 状态机（返工/超限/只读上下文不可变）、TokenBudgetTracker、UTF-8 字节截断、路径与 symlink 安全、Git hooks 策略、测试命令策略、CLI 校验，以及报告投影、体积上限、脱敏、XSS 转义与零外链。
 - **Golden**：`tests/golden/event-schema.snapshot.json` 锁定事件契约，防 Schema 漂移。
-- **E2E**：`tests/e2e/full-workflow.test.ts` 真实执行 `node --test`、创建真实 Git commit，并对两套相同仓库输入的 `workflowSignature` 与门禁判定做一致性断言。
+- **E2E**：`tests/e2e/full-workflow.test.ts` 真实执行 `node --test`、创建真实 Git commit，并对两套相同仓库输入的 `workflowSignature` 与门禁判定做一致性断言；`tests/e2e/report.test.ts` 通过 CLI 为成功/失败 Run 生成报告。
 - **质量门禁**：`npm run check` 串行执行 TypeScript 严格检查、类型感知 ESLint、Prettier 检查与测试；`.github/workflows/ci.yml` 在 push / pull request 中运行同一门禁。
 
 ---
 
-## 11. 已知问题与决策记录（评审发现）
+## 12. 已知问题与决策记录（评审发现）
 
 | #   | 问题                                                                             | 位置                                               | 严重度 | 处置                                                                              |
 | --- | -------------------------------------------------------------------------------- | -------------------------------------------------- | ------ | --------------------------------------------------------------------------------- |
@@ -261,11 +283,13 @@ PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3�
 
 **v0.2 已解决决策**：Git hooks 改为默认执行且可显式跳过；CODE 上下文改为 UTF-8 字节截断；新增 ESLint、Prettier 与 CI；新增规范化工作流签名关闭可复现性 DoD。
 
-## 12. 演进路线（对齐 PRD §7）
+**v0.3 已解决决策**：`stage.failed.kind` 向后兼容落盘；审计函数提升为 executor/report 共享模块；新增纯函数报告管线、离线单文件渲染和 2,000 条时间线边界。
+
+## 13. 演进路线（对齐 PRD §7）
 
 | 阶段             | 架构动作                                   | 接缝                                                                 |
 | ---------------- | ------------------------------------------ | -------------------------------------------------------------------- |
-| Phase 2 可观测   | 回放 UI / 实时事件订阅                     | EventLog 已就绪，补 WS 订阅层                                        |
+| Phase 2 可观测   | ✅ 静态离线报告；实时事件订阅待后续        | 纯投影已就绪；实时能力可复用 EventLog                                |
 | Phase 3 生产级   | 沙箱执行、审批网关、并发任务、真实仓库接入 | `ToolPolicy`→沙箱；阶段表→可配置流水线；`EventLog` 单文件→可寻址存储 |
 | Phase 4 长期记忆 | 向量库 + 语义检索                          | `MemoryProvider` 替换 Noop                                           |
 
@@ -273,8 +297,9 @@ PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3�
 
 ---
 
-## 13. 与 PRD v0.2 的对应关系
+## 14. 与 PRD v0.3 的对应关系
 
 - DoD 前四项（全流程 / 审查真实输出 / 测试真实通过 / 有效 commit）：已由 e2e 验证 ✅。
 - DoD 第五项（可复现）：`workflowSignature` 双 Run 一致性 + 相同门禁判定已由 e2e 验证 ✅；`temperature=0 + seed=42` 尽力稳定模型输出，非比特级承诺。
-- 非目标（长期记忆 / 可视化 / 并发）：架构接缝已留，均不实现。
+- Phase 2 P0（时间线 / 门禁 / 失败 / 统计 / 离线报告）：纯函数投影 + CLI 成功/失败 e2e 已验证 ✅。
+- 非目标（实时视图 / 长期记忆 / 并发）：架构接缝已留，本轮不实现。

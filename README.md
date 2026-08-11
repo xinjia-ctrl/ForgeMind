@@ -58,14 +58,26 @@ node dist/src/runtime/cli.js replay \
 
 `workflowTrace` and `workflowSignature` normalize those events into a stable process signature so identical inputs can be checked for the same stage sequence, tool outcomes, and gate decisions.
 
+## Offline report
+
+Generate a self-contained visual report for any recorded run:
+
+```bash
+node dist/src/runtime/cli.js report \
+  --repo /absolute/path/to/target-repo \
+  --run-id <run-id>
+```
+
+The report is written to `<git-dir>/forgemind/reports/<run-id>.html`. It needs no server or network connection and shows the chronological stage/attempt timeline, gate rework loops, typed failures, token and tool statistics, audited tool details, artifacts, and the workflow signature.
+
 ## Quality checks
 
 ```bash
 npm run check
 ```
 
-The quality gate runs strict TypeScript checks, type-aware ESLint, Prettier verification, and 23 tests. Coverage includes state transitions, rework limits, token budgets, UTF-8 truncation, path and symlink safety, Git hooks, command policy, the versioned event/replay contract, and end-to-end workflows that run real tests, create real commits, and compare reproducibility signatures.
+The quality gate runs strict TypeScript checks, type-aware ESLint, Prettier verification, and 31 tests. Coverage includes state transitions, rework limits, token budgets, UTF-8 truncation, path and symlink safety, Git hooks, command policy, the versioned event/replay contract, offline report security and limits, and end-to-end workflows that run real tests, create real commits, compare reproducibility signatures, and generate successful and failed reports through the CLI.
 
 ## Security boundary
 
-MVP commands run on the local machine. ForgeMind uses deny-by-default stage policies, exact command allowlists, no shell execution, path containment checks, symlink escape protection, read-only review/test agents, bounded outputs, and audit redaction. Run it only against trusted repositories until sandbox execution and approval gateways are added in a later phase.
+Commands run on the local machine. ForgeMind uses deny-by-default stage policies, exact command allowlists, no shell execution, path containment checks, symlink escape protection, read-only review/test agents, bounded outputs, and audit redaction. Reports apply the same redaction again, escape all dynamic HTML, and use an offline-only content security policy. Run ForgeMind only against trusted repositories until sandbox execution and approval gateways are added in a later phase.

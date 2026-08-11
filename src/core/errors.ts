@@ -29,6 +29,10 @@ export class FatalFailure extends ForgeMindError {
   }
 }
 
+export function classifyFailure(error: unknown): FailureKind {
+  return error instanceof ForgeMindError ? error.kind : "FATAL";
+}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

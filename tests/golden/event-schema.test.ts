@@ -23,12 +23,17 @@ it("keeps the versioned event and replay contract stable", async () => {
       data: { runId: "golden-run", stage: "PLAN", attempt: 1 },
     });
     await log.append({
-      type: "stage.completed",
-      data: { runId: "golden-run", stage: "PLAN", status: "SUCCEEDED" },
+      type: "stage.failed",
+      data: {
+        runId: "golden-run",
+        stage: "PLAN",
+        kind: "STAGE",
+        error: "Planning failed",
+      },
     });
     await log.append({
       type: "run.finished",
-      data: { runId: "golden-run", status: "SUCCEEDED", summary: "Complete" },
+      data: { runId: "golden-run", status: "FAILED", summary: "Planning failed" },
     });
     const snapshot = JSON.parse(
       await readFile("tests/golden/event-schema.snapshot.json", "utf8"),

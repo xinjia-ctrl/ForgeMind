@@ -1,4 +1,4 @@
-import { errorMessage, FatalFailure } from "./errors.js";
+import { classifyFailure, errorMessage, FatalFailure } from "./errors.js";
 import type { AgentFactory } from "./agent-factory.js";
 import { withArchitecture, withArtifacts, withAttempt, withGate, withPlan } from "./context.js";
 import type { EventLog } from "./event-log.js";
@@ -111,7 +111,7 @@ export class Orchestrator {
       }
       throw new FatalFailure("Unreachable orchestrator state");
     } catch (error) {
-      const status: RunStatus = error instanceof FatalFailure ? "BLOCKED" : "FAILED";
+      const status: RunStatus = classifyFailure(error) === "FATAL" ? "BLOCKED" : "FAILED";
       return await this.finish(ctx, status, errorMessage(error));
     }
   }

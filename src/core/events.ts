@@ -53,6 +53,7 @@ export interface EventDataMap {
   readonly "stage.failed": {
     readonly runId: string;
     readonly stage: StageId;
+    readonly kind?: "STAGE" | "HARD" | "FATAL";
     readonly error: string;
     readonly stack?: string;
   };

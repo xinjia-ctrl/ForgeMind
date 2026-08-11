@@ -1,6 +1,6 @@
 {
   "name": "forgemind",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Production-oriented multi-agent coding workflow orchestrator",
   "type": "module",
   "private": true,

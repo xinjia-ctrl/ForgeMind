@@ -1,6 +1,6 @@
 # ForgeMind 产品使用手册
 
-> 版本：v0.2（对齐已实现代码）
+> 版本：v0.3（对齐已实现代码）
 > 说明：本手册面向使用者，描述**当前代码实际具备**的产品能力，不含规划中未实现的功能。
 
 ---
@@ -16,12 +16,12 @@ ForgeMind 是一个多 Agent 协作的软件研发编排器：输入一条自然
 | 项       | 现状                                                                      |
 | -------- | ------------------------------------------------------------------------- |
 | 输入     | 一条自然语言需求（≤ 100,000 字符）                                        |
-| 输出     | 一个 Git commit + 全流程事件日志（JSONL）                                 |
+| 输出     | 一个 Git commit + 全流程事件日志（JSONL）+ 可选单文件 HTML 报告           |
 | 运行环境 | 本地机器，目标仓库必须干净（无未提交变更）                                |
 | 模型     | 任意 OpenAI 兼容 Chat Completions 接口（`gpt-4.1-mini` 默认）             |
 | 测试执行 | 真实运行测试命令（自动探测 package test，回退 `node --test`，可显式指定） |
 | 长期记忆 | 无（一次 Run 即独立上下文）                                               |
-| 可视化   | 无（事件回放以 JSON 输出，可自行做 UI）                                   |
+| 可视化   | 任意历史 Run 可生成离线单文件 HTML 报告                                   |
 
 ## 3. 使用前置条件
 
@@ -97,10 +97,25 @@ forge-mind replay --repo <path> --run-id <run-id>
 
 输出按序排列的完整事件时间线（每一步的 LLM 调用、工具调用、门禁判定）及 `workflowSignature`，用于演示、审计与流程一致性比较。
 
+### 生成可视化报告
+
+```bash
+forge-mind report --repo <path> --run-id <run-id>
+```
+
+报告写入 `<git-dir>/forgemind/reports/<run-id>.html`，直接用浏览器离线打开，无需启动服务或联网。报告包含：
+
+- 按实际顺序排列的阶段/attempt 时间线与播放控制；
+- REVIEW/TEST 门禁判定及返工标记；
+- 失败阶段、Stage/Hard/Fatal 类型和错误信息；
+- 各阶段 LLM token、工具调用数和可对账耗时；
+- 产物列表、审计后的工具详情与流程签名。
+
 ## 7. 产物与可观测性
 
 - **工作区产物**：`docs/.forgemind/<run-id>/plan.md`、`architecture.md`
 - **事件日志**：`.git/forgemind/runs/<run-id>.jsonl`（不进入 commit，不污染产出）
+- **可视化报告**：`.git/forgemind/reports/<run-id>.html`（日志的只读投影，不是第二份事实源）
 - **事件类型**：`run.started / stage.started / llm.called / tool.called / artifact.produced / gate.rejected / gate.passed / stage.completed / stage.failed / run.finished`
 - **门禁判定**：REVIEW 以 diff 指纹（sha256）锚定，防止"审查后工作区又变了"；COMMIT 前强制复核 diff 指纹一致。
 - **流程签名**：`workflowSignature` 忽略时间戳、runId、commit sha 等非确定数据，对事件顺序、阶段、工具结果和门禁结果生成稳定 sha256。
@@ -113,6 +128,7 @@ forge-mind replay --repo <path> --run-id <run-id>
 - 工具按阶段白名单：REVIEW/TEST 只读，CODE 可写但禁写 `docs/.forgemind` 与 `.git`
 - 路径安全：目录穿越、symlink 逃逸、Git 元数据访问均被拒绝
 - 审计脱敏：事件日志对密钥/内容类字段脱敏、超长截断
+- 报告安全：工具参数/结果二次脱敏，所有动态内容 HTML 转义，CSP 禁止外部资源与联网
 - Git hooks 默认执行；仅显式 `--skip-git-hooks` 时跳过，并在 ToolPolicy 审计描述中记录
 
 > ⚠️ **仅对受信任的仓库运行**。生产级沙箱与审批网关规划在 Phase 3。
@@ -140,3 +156,6 @@ forge-mind replay --repo <path> --run-id <run-id>
 
 **Q：产物为什么不进 commit？**
 运行事件写入 `.git/forgemind/runs/`（Git 元数据目录），从设计上避免污染提交产物。
+
+**Q：报告为什么不需要服务？**
+报告是内嵌 CSS/JavaScript 的单个 HTML 文件，所有数据都来自对应 Run 的 JSONL 事件日志；它不加载任何外链资源。
