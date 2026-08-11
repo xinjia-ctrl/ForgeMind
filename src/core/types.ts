@@ -1,11 +1,4 @@
-export const STAGES = [
-  "PLAN",
-  "ARCH",
-  "CODE",
-  "REVIEW",
-  "TEST",
-  "COMMIT",
-] as const;
+export const STAGES = ["PLAN", "ARCH", "CODE", "REVIEW", "TEST", "COMMIT"] as const;
 
 export type StageId = (typeof STAGES)[number];
 export type GateStage = "REVIEW" | "TEST";
@@ -45,13 +38,7 @@ export interface ArchDecision {
   readonly summary: string;
 }
 
-export type ArtifactKind =
-  | "plan"
-  | "architecture"
-  | "source"
-  | "review"
-  | "test"
-  | "commit";
+export type ArtifactKind = "plan" | "architecture" | "source" | "review" | "test" | "commit";
 
 export interface ArtifactRef {
   readonly path: string;
@@ -118,11 +105,7 @@ export interface CommitStageOutput {
 }
 
 export type StageOutput =
-  | PlanStageOutput
-  | ArchitectureStageOutput
-  | CodeStageOutput
-  | GateStageOutput
-  | CommitStageOutput;
+  PlanStageOutput | ArchitectureStageOutput | CodeStageOutput | GateStageOutput | CommitStageOutput;
 
 export interface StageAgent {
   readonly id: StageId;

@@ -23,12 +23,7 @@ export class GitDiffTool implements Tool {
     try {
       const unstaged = await git(policy, ["diff", "--no-ext-diff", "--"]);
       const staged = await git(policy, ["diff", "--cached", "--no-ext-diff", "--"]);
-      const untracked = await git(policy, [
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-        "-z",
-      ]);
+      const untracked = await git(policy, ["ls-files", "--others", "--exclude-standard", "-z"]);
       let untrackedDiff = "";
       if (untracked.exitCode === 0) {
         const files = untracked.stdout.split("\0").filter(Boolean).slice(0, 100);
@@ -51,10 +46,7 @@ export class GitDiffTool implements Tool {
       const combined = `${unstaged.stdout}${staged.stdout}${untrackedDiff}`;
       const text = Buffer.from(combined).subarray(0, policy.maxResultBytes).toString("utf8");
       return {
-        ok:
-          unstaged.exitCode === 0 &&
-          staged.exitCode === 0 &&
-          untracked.exitCode === 0,
+        ok: unstaged.exitCode === 0 && staged.exitCode === 0 && untracked.exitCode === 0,
         data: {
           diff: text,
           stderr: `${unstaged.stderr}${staged.stderr}${untracked.stderr}`,
@@ -97,7 +89,12 @@ export class GitCommitTool implements Tool {
       }
       const add = await git(policy, ["add", "--all", "--"]);
       if (add.exitCode !== 0) return processFailure(add);
-      const commit = await git(policy, ["commit", "--no-verify", "-m", message]);
+      const commit = await git(policy, [
+        "commit",
+        ...(policy.skipGitHooks ? ["--no-verify"] : []),
+        "-m",
+        message,
+      ]);
       if (commit.exitCode !== 0) return processFailure(commit);
       const revision = await git(policy, ["rev-parse", "HEAD"]);
       if (revision.exitCode !== 0) return processFailure(revision);

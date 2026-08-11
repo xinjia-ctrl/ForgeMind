@@ -1,6 +1,6 @@
 {
   "name": "forgemind",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Production-oriented multi-agent coding workflow orchestrator",
   "type": "module",
   "private": true,
@@ -9,7 +9,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
     "test": "npm run build && node --test dist/tests/*/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -17,7 +21,11 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "eslint": "10.8.1",
+    "prettier": "3.9.6",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "8.66.0"
   }
 }

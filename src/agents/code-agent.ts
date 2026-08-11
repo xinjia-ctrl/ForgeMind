@@ -1,10 +1,6 @@
 import { StageFailure } from "../core/errors.js";
-import type {
-  ArtifactRef,
-  StageInput,
-  StageOutput,
-  TaskContext,
-} from "../core/types.js";
+import { truncateUtf8 } from "../core/text.js";
+import type { ArtifactRef, StageInput, StageOutput, TaskContext } from "../core/types.js";
 import type { ToolResult } from "../tools/types.js";
 import type { BaseAgentOptions } from "./base-agent.js";
 import { BaseAgent } from "./base-agent.js";
@@ -21,16 +17,14 @@ export const CODE_TOOLS = [
 
 const MAX_OPERATIONS = 30;
 const MAX_CONTEXT_FILES = 8;
+const MAX_CONTEXT_BYTES = 80_000;
 
 export class CodeAgent extends BaseAgent {
   public constructor(options: Omit<BaseAgentOptions, "id" | "tools">) {
     super({ ...options, id: "CODE", tools: CODE_TOOLS });
   }
 
-  protected async execute(
-    input: StageInput,
-    ctx: TaskContext,
-  ): Promise<StageOutput> {
+  protected async execute(input: StageInput, ctx: TaskContext): Promise<StageOutput> {
     if (ctx.plan === null || ctx.architecture === null) {
       throw new StageFailure("CODE requires plan and architecture decisions");
     }
@@ -97,7 +91,9 @@ export class CodeAgent extends BaseAgent {
     const selected = [...new Set([...preferred, ...files])]
       .filter((file) => files.includes(file))
       .slice(0, MAX_CONTEXT_FILES);
-    const excerpts: string[] = [`Workspace files (${files.length}):\n${files.slice(0, 300).join("\n")}`];
+    const excerpts: string[] = [
+      `Workspace files (${files.length}):\n${files.slice(0, 300).join("\n")}`,
+    ];
     for (const file of selected) {
       const result = await this.requireTool("read_file", {
         path: file,
@@ -107,7 +103,7 @@ export class CodeAgent extends BaseAgent {
       const content = extractReadContent(result);
       excerpts.push(`--- ${file} ---\n${content}`);
     }
-    return excerpts.join("\n").slice(0, 80_000);
+    return truncateUtf8(excerpts.join("\n"), MAX_CONTEXT_BYTES).text;
   }
 }
 
@@ -115,9 +111,7 @@ function extractFiles(result: ToolResult): string[] {
   const data = result.data;
   if (typeof data !== "object" || data === null || !("files" in data)) return [];
   const files = data.files;
-  return Array.isArray(files) && files.every((item) => typeof item === "string")
-    ? files
-    : [];
+  return Array.isArray(files) && files.every((item) => typeof item === "string") ? files : [];
 }
 
 function extractReadContent(result: ToolResult): string {

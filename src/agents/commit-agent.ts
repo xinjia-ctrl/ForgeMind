@@ -1,10 +1,5 @@
 import { StageFailure } from "../core/errors.js";
-import type {
-  ArtifactRef,
-  StageInput,
-  StageOutput,
-  TaskContext,
-} from "../core/types.js";
+import type { ArtifactRef, StageInput, StageOutput, TaskContext } from "../core/types.js";
 import type { ToolResult } from "../tools/types.js";
 import type { BaseAgentOptions } from "./base-agent.js";
 import { BaseAgent } from "./base-agent.js";
@@ -17,18 +12,13 @@ export class CommitAgent extends BaseAgent {
     super({ ...options, id: "COMMIT", tools: COMMIT_TOOLS });
   }
 
-  protected async execute(
-    _input: StageInput,
-    ctx: TaskContext,
-  ): Promise<StageOutput> {
+  protected async execute(_input: StageInput, ctx: TaskContext): Promise<StageOutput> {
     const review = [...ctx.gates].reverse().find((gate) => gate.stage === "REVIEW");
     const test = [...ctx.gates].reverse().find((gate) => gate.stage === "TEST");
     if (review?.passed !== true || test?.passed !== true) {
       throw new StageFailure("COMMIT requires passing REVIEW and TEST gates");
     }
-    const reviewedFingerprint = /^diff-sha256:([a-f0-9]{64});/.exec(
-      review.evidence,
-    )?.[1];
+    const reviewedFingerprint = /^diff-sha256:([a-f0-9]{64});/.exec(review.evidence)?.[1];
     if (reviewedFingerprint === undefined) {
       throw new StageFailure("REVIEW evidence is missing the diff fingerprint");
     }

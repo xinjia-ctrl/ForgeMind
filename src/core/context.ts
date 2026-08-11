@@ -32,22 +32,14 @@ export function createTaskContext(options: InitialContextOptions): TaskContext {
   });
 }
 
-export function withAttempt(
-  ctx: TaskContext,
-  stage: StageId,
-  count: number,
-): TaskContext {
+export function withAttempt(ctx: TaskContext, stage: StageId, count: number): TaskContext {
   return freezeContext({
     ...ctx,
     meta: { ...ctx.meta, attempt: { stage, count } },
   });
 }
 
-export function withPlan(
-  ctx: TaskContext,
-  plan: TaskPlan,
-  artifact: ArtifactRef,
-): TaskContext {
+export function withPlan(ctx: TaskContext, plan: TaskPlan, artifact: ArtifactRef): TaskContext {
   return freezeContext({
     ...ctx,
     plan,
@@ -67,10 +59,7 @@ export function withArchitecture(
   });
 }
 
-export function withArtifacts(
-  ctx: TaskContext,
-  artifacts: readonly ArtifactRef[],
-): TaskContext {
+export function withArtifacts(ctx: TaskContext, artifacts: readonly ArtifactRef[]): TaskContext {
   return freezeContext({
     ...ctx,
     artifacts: [...ctx.artifacts, ...artifacts],

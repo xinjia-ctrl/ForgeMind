@@ -7,11 +7,7 @@ import type { AgentFactory } from "../../src/core/agent-factory.js";
 import { createTaskContext } from "../../src/core/context.js";
 import { EventLog } from "../../src/core/event-log.js";
 import { Orchestrator } from "../../src/core/orchestrator.js";
-import type {
-  StageAgent,
-  StageId,
-  StageOutput,
-} from "../../src/core/types.js";
+import type { StageAgent, StageId, StageOutput } from "../../src/core/types.js";
 import { DEFAULT_TOKEN_BUDGETS } from "../../src/config/budgets.js";
 import { NoopMemoryProvider } from "../../src/memory/noop-memory-provider.js";
 
@@ -19,9 +15,9 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -111,10 +107,7 @@ describe("Orchestrator", () => {
   });
 });
 
-async function orchestratorFixture(
-  outputs: Array<readonly [StageId, StageOutput]>,
-  maxRework = 3,
-) {
+async function orchestratorFixture(outputs: Array<readonly [StageId, StageOutput]>, maxRework = 3) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-orchestrator-"));
   temporaryDirectories.push(directory);
   const eventLog = await EventLog.create(directory, "unit-run");
@@ -140,9 +133,7 @@ async function orchestratorFixture(
 class QueueAgentFactory implements AgentFactory {
   public feedbackSeen: string | undefined;
 
-  public constructor(
-    private readonly queue: Array<readonly [StageId, StageOutput]>,
-  ) {}
+  public constructor(private readonly queue: Array<readonly [StageId, StageOutput]>) {}
 
   public create(stage: StageId): StageAgent {
     const next = this.queue.shift();

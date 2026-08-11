@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { EventLog } from "../core/event-log.js";
-import { StageFailure } from "../core/errors.js";
+import { errorMessage, StageFailure } from "../core/errors.js";
 import { estimateTokens, TokenBudgetTracker } from "../core/token-budget.js";
 import type {
   AgentLifecycle,
+  ArtifactRef,
   StageAgent,
   StageId,
   StageInput,
@@ -11,7 +12,7 @@ import type {
   TaskContext,
   TokenBudget,
 } from "../core/types.js";
-import type { ChatMessage, ChatProvider } from "../llm/chat-provider.js";
+import type { ChatCompletion, ChatMessage, ChatProvider } from "../llm/chat-provider.js";
 import type { ScopedToolExecutor } from "../tools/executor.js";
 import type { ToolResult } from "../tools/types.js";
 
@@ -54,20 +55,35 @@ export abstract class BaseAgent implements StageAgent {
       throw new StageFailure(`${this.id} agent instance has already run`);
     }
     this.#lifecycle = "RUNNING";
+    await this.#eventLog.append({
+      type: "stage.started",
+      data: { runId: ctx.runId, stage: this.id, attempt: input.attempt },
+    });
     try {
       const result = await this.execute(input, ctx);
+      await this.recordOutput(ctx, result);
+      await this.#eventLog.append({
+        type: "stage.completed",
+        data: { runId: ctx.runId, stage: this.id, status: "SUCCEEDED" },
+      });
       this.#lifecycle = "SUCCEEDED";
       return result;
     } catch (error) {
       this.#lifecycle = "FAILED";
+      await this.#eventLog.append({
+        type: "stage.failed",
+        data: {
+          runId: ctx.runId,
+          stage: this.id,
+          error: errorMessage(error),
+          ...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {}),
+        },
+      });
       throw error;
     }
   }
 
-  protected abstract execute(
-    input: StageInput,
-    ctx: TaskContext,
-  ): Promise<StageOutput>;
+  protected abstract execute(input: StageInput, ctx: TaskContext): Promise<StageOutput>;
 
   protected async completeJson(
     ctx: TaskContext,
@@ -81,17 +97,33 @@ export abstract class BaseAgent implements StageAgent {
     const tracker = new TokenBudgetTracker(this.#budget);
     const estimatedInput = estimateTokens(messages.map((item) => item.content).join("\n"));
     tracker.ensureInputFits(estimatedInput);
-    const completion = await this.#provider.complete(messages, {
-      model: this.#model,
-      temperature: 0,
-      maxOutputTokens: this.#budget.output,
-      seed: 42,
-    });
+    const promptFingerprint = createHash("sha256").update(JSON.stringify(messages)).digest("hex");
+    let completion: ChatCompletion;
+    try {
+      completion = await this.#provider.complete(messages, {
+        model: this.#model,
+        temperature: 0,
+        maxOutputTokens: this.#budget.output,
+        seed: 42,
+      });
+    } catch (error) {
+      await this.recordLlmCall(ctx, estimatedInput, 0, promptFingerprint);
+      throw error;
+    }
     const inputTokens = completion.usage.inputTokens || estimatedInput;
     const outputTokens = completion.usage.outputTokens || estimateTokens(completion.content);
+    await this.recordLlmCall(ctx, inputTokens, outputTokens, promptFingerprint);
     tracker.consumeInput(inputTokens);
     tracker.consumeOutput(outputTokens);
+    return parseJsonObject(completion.content);
+  }
 
+  private async recordLlmCall(
+    ctx: TaskContext,
+    inputTokens: number,
+    outputTokens: number,
+    promptFingerprint: string,
+  ): Promise<void> {
     await this.#eventLog.append({
       type: "llm.called",
       data: {
@@ -100,12 +132,9 @@ export abstract class BaseAgent implements StageAgent {
         model: this.#model,
         inputTokens,
         outputTokens,
-        promptFingerprint: createHash("sha256")
-          .update(JSON.stringify(messages))
-          .digest("hex"),
+        promptFingerprint,
       },
     });
-    return parseJsonObject(completion.content);
   }
 
   protected async requireTool(name: string, args: unknown): Promise<ToolResult> {
@@ -115,13 +144,61 @@ export abstract class BaseAgent implements StageAgent {
     }
     return result;
   }
+
+  private async recordOutput(ctx: TaskContext, output: StageOutput): Promise<void> {
+    for (const artifact of outputArtifacts(output)) {
+      await this.#eventLog.append({
+        type: "artifact.produced",
+        data: {
+          runId: ctx.runId,
+          stage: artifact.stage,
+          path: artifact.path,
+          kind: artifact.kind,
+          summary: artifact.summary,
+        },
+      });
+    }
+    if (output.kind === "gate") {
+      await this.#eventLog.append(
+        output.gate.passed
+          ? {
+              type: "gate.passed",
+              data: {
+                runId: ctx.runId,
+                stage: output.gate.stage,
+                evidence: output.gate.evidence,
+              },
+            }
+          : {
+              type: "gate.rejected",
+              data: {
+                runId: ctx.runId,
+                stage: output.gate.stage,
+                reason: output.gate.reason,
+                feedback: output.gate.feedback,
+              },
+            },
+      );
+    }
+  }
+}
+
+function outputArtifacts(output: StageOutput): readonly ArtifactRef[] {
+  switch (output.kind) {
+    case "plan":
+    case "architecture":
+    case "commit":
+      return [output.artifact];
+    case "code":
+      return output.artifacts;
+    case "gate":
+      return [];
+  }
 }
 
 function parseJsonObject(content: string): Record<string, unknown> {
   const trimmed = content.trim();
-  const withoutFence = trimmed
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
+  const withoutFence = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = withoutFence.indexOf("{");
   const end = withoutFence.lastIndexOf("}");
   if (start < 0 || end <= start) {

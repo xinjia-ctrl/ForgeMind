@@ -83,10 +83,7 @@ function auditValue(value: unknown, key = ""): unknown {
   if (Array.isArray(value)) return value.map((item) => auditValue(item));
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(
-      Object.entries(value).map(([childKey, child]) => [
-        childKey,
-        auditValue(child, childKey),
-      ]),
+      Object.entries(value).map(([childKey, child]) => [childKey, auditValue(child, childKey)]),
     );
   }
   return value;

@@ -20,11 +20,20 @@ describe("CLI validation", () => {
       1,
     );
   });
+
+  it("rejects an invalid Git hook policy before reading credentials", async () => {
+    assert.equal(
+      await withMutedStderr(() =>
+        main(["run", "--repo", ".", "--requirement", "x", "--skip-git-hooks", "sometimes"]),
+      ),
+      1,
+    );
+  });
 });
 
 async function withMutedStderr(action: () => Promise<number>): Promise<number> {
   const original = process.stderr.write.bind(process.stderr);
-  process.stderr.write = (() => true) as typeof process.stderr.write;
+  process.stderr.write = () => true;
   try {
     return await action();
   } finally {

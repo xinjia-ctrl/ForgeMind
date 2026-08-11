@@ -18,6 +18,7 @@ export interface ToolPolicyOptions {
   readonly allowedCommands?: readonly (readonly string[])[];
   readonly maxResultBytes?: number;
   readonly commandTimeoutMs?: number;
+  readonly skipGitHooks?: boolean;
 }
 
 export class ToolPolicy {
@@ -30,6 +31,7 @@ export class ToolPolicy {
   public readonly allowedCommands: readonly (readonly string[])[];
   public readonly maxResultBytes: number;
   public readonly commandTimeoutMs: number;
+  public readonly skipGitHooks: boolean;
 
   public constructor(options: ToolPolicyOptions) {
     this.workspaceRoot = options.workspaceRoot;
@@ -41,6 +43,7 @@ export class ToolPolicy {
     this.allowedCommands = options.allowedCommands ?? [];
     this.maxResultBytes = options.maxResultBytes ?? 128_000;
     this.commandTimeoutMs = options.commandTimeoutMs ?? 120_000;
+    this.skipGitHooks = options.skipGitHooks ?? false;
   }
 
   public allowsCommand(command: readonly string[]): boolean {
@@ -52,7 +55,10 @@ export class ToolPolicy {
   }
 
   public describe(): string {
-    return `${this.stage}:${this.writable ? "write" : "read-only"}`;
+    const access = this.writable ? "write" : "read-only";
+    const hooks =
+      this.stage === "COMMIT" ? `:hooks-${this.skipGitHooks ? "skipped" : "enabled"}` : "";
+    return `${this.stage}:${access}${hooks}`;
   }
 }
 

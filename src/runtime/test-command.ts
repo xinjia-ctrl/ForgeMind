@@ -11,9 +11,9 @@ export async function resolveTestCommand(
 ): Promise<readonly string[]> {
   if (explicit !== undefined) return parseTestCommand(explicit);
   try {
-    const packageJson = JSON.parse(
-      await readFile(path.join(repoRoot, "package.json"), "utf8"),
-    ) as { scripts?: Record<string, unknown> };
+    const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as {
+      scripts?: Record<string, unknown>;
+    };
     if (typeof packageJson.scripts?.["test"] === "string") return ["npm", "test"];
   } catch {
     // A non-Node target can still use Node's built-in test discovery when configured.

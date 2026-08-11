@@ -20,6 +20,7 @@ export interface RunOptions {
   readonly runId?: string;
   readonly testCommand?: string;
   readonly maxRework?: number;
+  readonly skipGitHooks?: boolean;
 }
 
 export interface RunExecution {
@@ -63,6 +64,7 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
     workspaceRoot: workspace.root,
     budgets: DEFAULT_TOKEN_BUDGETS,
     testCommand,
+    skipGitHooks: options.skipGitHooks ?? false,
   });
   const orchestrator = new Orchestrator({
     eventLog,
@@ -75,6 +77,9 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
 }
 
 function createRunId(): string {
-  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
   return `${timestamp}-${randomUUID().slice(0, 8)}`;
 }

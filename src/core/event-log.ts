@@ -13,10 +13,7 @@ export class EventLog {
     this.#filePath = filePath;
   }
 
-  public static async create(
-    directory: string,
-    runId: string,
-  ): Promise<EventLog> {
+  public static async create(directory: string, runId: string): Promise<EventLog> {
     assertValidRunId(runId);
     await mkdir(directory, { recursive: true });
     const filePath = path.join(directory, `${runId}.jsonl`);
@@ -90,12 +87,19 @@ export function assertValidRunId(runId: string): void {
 
 function parseEvent(line: string, lineNumber: number): ForgeMindEvent {
   try {
-    const value = JSON.parse(line) as Partial<ForgeMindEvent>;
+    const value: unknown = JSON.parse(line);
     if (
+      typeof value !== "object" ||
+      value === null ||
+      !("v" in value) ||
       value.v !== 1 ||
+      !("seq" in value) ||
       typeof value.seq !== "number" ||
+      !("ts" in value) ||
       typeof value.ts !== "string" ||
+      !("type" in value) ||
       typeof value.type !== "string" ||
+      !("data" in value) ||
       value.data === null ||
       typeof value.data !== "object"
     ) {

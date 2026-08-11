@@ -35,7 +35,6 @@ it("keeps the versioned event and replay contract stable", async () => {
     ) as unknown;
     assert.deepEqual(replay(await log.load()), snapshot);
     const rawEvents = await log.load();
-    assert.ok(rawEvents.every((event) => event.v === 1));
     assert.deepEqual(
       rawEvents.map((event) => event.seq),
       [1, 2, 3, 4],

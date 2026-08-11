@@ -5,6 +5,7 @@ import path from "node:path";
 import { it } from "node:test";
 import { EventLog } from "../../src/core/event-log.js";
 import { replay } from "../../src/core/replay.js";
+import { workflowSignature } from "../../src/core/reproducibility.js";
 import { FakeChatProvider } from "../../src/llm/fake-provider.js";
 import { runProcess } from "../../src/tools/process.js";
 import { runForgeMind } from "../../src/runtime/run.js";
@@ -12,52 +13,7 @@ import { runForgeMind } from "../../src/runtime/run.js";
 it("runs requirement through real tests and creates a Git commit", async () => {
   const repo = await createDemoRepository();
   try {
-    const provider = new FakeChatProvider([
-      JSON.stringify({
-        objective: "Implement integer addition",
-        steps: [
-          { id: "1", title: "Implement", description: "Implement add" },
-          { id: "2", title: "Test", description: "Cover positive and negative values" },
-        ],
-        acceptanceCriteria: ["add returns the sum", "node tests pass"],
-        summary: "Implement and test add",
-      }),
-      JSON.stringify({
-        decisions: ["Keep the existing ESM module"],
-        files: [
-          { path: "src/math.js", purpose: "Addition implementation" },
-          { path: "test/math.test.js", purpose: "Addition tests" },
-        ],
-        risks: ["Incorrect negative number handling"],
-        summary: "Extend the existing math module and use node:test",
-      }),
-      JSON.stringify({
-        summary: "Implemented addition with representative tests",
-        operations: [
-          {
-            tool: "write_file",
-            args: {
-              path: "src/math.js",
-              content: "export function add(left, right) {\n  return left + right;\n}\n",
-            },
-          },
-          {
-            tool: "write_file",
-            args: {
-              path: "test/math.test.js",
-              content:
-                "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { add } from '../src/math.js';\n\ntest('adds integers', () => {\n  assert.equal(add(2, 3), 5);\n  assert.equal(add(-2, 1), -1);\n});\n",
-            },
-          },
-        ],
-      }),
-      JSON.stringify({
-        approved: true,
-        reason: "Implementation is correct and scoped",
-        feedback: "No changes required",
-        evidence: "Reviewed implementation and meaningful node:test coverage",
-      }),
-    ]);
+    const provider = createDemoProvider();
 
     const execution = await runForgeMind({
       repoPath: repo,
@@ -91,6 +47,104 @@ it("runs requirement through real tests and creates a Git commit", async () => {
   }
 });
 
+it("reproduces the workflow sequence and gate decisions for identical input", async () => {
+  const repositories = await Promise.all([createDemoRepository(), createDemoRepository()]);
+  try {
+    const executions = [];
+    for (const [index, repo] of repositories.entries()) {
+      executions.push(
+        await runForgeMind({
+          repoPath: repo,
+          requirement: "Add an integer addition function with tests",
+          provider: createDemoProvider(),
+          model: "fake-model",
+          runId: `reproducible-run-${index + 1}`,
+        }),
+      );
+    }
+    const eventSets = await Promise.all(
+      executions.map((execution, index) =>
+        EventLog.open(path.dirname(execution.eventLogPath), `reproducible-run-${index + 1}`).load(),
+      ),
+    );
+    const firstEvents = eventSets[0];
+    const secondEvents = eventSets[1];
+    assert.ok(firstEvents);
+    assert.ok(secondEvents);
+    assert.equal(workflowSignature(firstEvents), workflowSignature(secondEvents));
+    assert.deepEqual(
+      executions.map((execution) =>
+        execution.result.context.gates.map((gate) => [gate.stage, gate.attempt, gate.passed]),
+      ),
+      [
+        [
+          ["REVIEW", 1, true],
+          ["TEST", 1, true],
+        ],
+        [
+          ["REVIEW", 1, true],
+          ["TEST", 1, true],
+        ],
+      ],
+    );
+  } finally {
+    await Promise.all(repositories.map((repo) => rm(repo, { recursive: true, force: true })));
+  }
+});
+
+function createDemoProvider(): FakeChatProvider {
+  return new FakeChatProvider([
+    JSON.stringify({
+      objective: "Implement integer addition",
+      steps: [
+        { id: "1", title: "Implement", description: "Implement add" },
+        {
+          id: "2",
+          title: "Test",
+          description: "Cover positive and negative values",
+        },
+      ],
+      acceptanceCriteria: ["add returns the sum", "node tests pass"],
+      summary: "Implement and test add",
+    }),
+    JSON.stringify({
+      decisions: ["Keep the existing ESM module"],
+      files: [
+        { path: "src/math.js", purpose: "Addition implementation" },
+        { path: "test/math.test.js", purpose: "Addition tests" },
+      ],
+      risks: ["Incorrect negative number handling"],
+      summary: "Extend the existing math module and use node:test",
+    }),
+    JSON.stringify({
+      summary: "Implemented addition with representative tests",
+      operations: [
+        {
+          tool: "write_file",
+          args: {
+            path: "src/math.js",
+            content: "export function add(left, right) {\n  return left + right;\n}\n",
+          },
+        },
+        {
+          tool: "write_file",
+          args: {
+            path: "test/math.test.js",
+            content:
+              "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { add } from '../src/math.js';\n\ntest('adds integers', () => {\n  assert.equal(add(2, 3), 5);\n  assert.equal(add(-2, 1), -1);\n});\n",
+          },
+        },
+      ],
+    }),
+    JSON.stringify({
+      approved: true,
+      reason: "Implementation is correct and scoped",
+      feedback: "No changes required",
+      evidence: "Reviewed implementation and meaningful node:test coverage",
+    }),
+  ]);
+}
+
 async function createDemoRepository(): Promise<string> {
   const repo = await mkdtemp(path.join(os.tmpdir(), "forgemind-e2e-"));
   await mkdir(path.join(repo, "src"));
@@ -99,11 +153,7 @@ async function createDemoRepository(): Promise<string> {
     `${JSON.stringify({ name: "demo", private: true, type: "module", scripts: { test: "node --test" } }, null, 2)}\n`,
     "utf8",
   );
-  await writeFile(
-    path.join(repo, "src/math.js"),
-    "// Math operations are added here.\n",
-    "utf8",
-  );
+  await writeFile(path.join(repo, "src/math.js"), "// Math operations are added here.\n", "utf8");
   await git(repo, ["init"]);
   await git(repo, ["config", "user.name", "ForgeMind Test"]);
   await git(repo, ["config", "user.email", "forgemind@example.invalid"]);

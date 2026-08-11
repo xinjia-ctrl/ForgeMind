@@ -1,9 +1,4 @@
-import type {
-  GateResult,
-  StageInput,
-  StageOutput,
-  TaskContext,
-} from "../core/types.js";
+import type { GateResult, StageInput, StageOutput, TaskContext } from "../core/types.js";
 import type { ToolResult } from "../tools/types.js";
 import type { BaseAgentOptions } from "./base-agent.js";
 import { BaseAgent } from "./base-agent.js";
@@ -22,10 +17,7 @@ export class TestAgent extends BaseAgent {
     this.#testCommand = options.testCommand;
   }
 
-  protected async execute(
-    input: StageInput,
-    _ctx: TaskContext,
-  ): Promise<StageOutput> {
+  protected async execute(input: StageInput, _ctx: TaskContext): Promise<StageOutput> {
     const [command, ...args] = this.#testCommand;
     if (command === undefined) throw new Error("Test command cannot be empty");
     const result = await this.toolExecutor.execute("run_command", { command, args });

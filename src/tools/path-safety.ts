@@ -63,11 +63,7 @@ function assertNotGitMetadata(root: string, candidate: string): void {
   }
 }
 
-function assertWritablePrefix(
-  root: string,
-  candidate: string,
-  prefixes: readonly string[],
-): void {
+function assertWritablePrefix(root: string, candidate: string, prefixes: readonly string[]): void {
   if (prefixes.length === 0) return;
   const relative = relativeWorkspacePath(root, candidate);
   const allowed = prefixes.some((prefix) => {
@@ -81,23 +77,21 @@ function assertWritablePrefix(
 
 async function nearestExistingAncestor(candidate: string): Promise<string> {
   let current = candidate;
-  while (true) {
+  while (current !== path.dirname(current)) {
     try {
       await lstat(current);
       return current;
     } catch (error) {
       if (!isMissing(error)) throw error;
-      const parent = path.dirname(current);
-      if (parent === current) throw error;
-      current = parent;
+      current = path.dirname(current);
     }
   }
+  await lstat(current);
+  return current;
 }
 
 function isMissing(error: unknown): boolean {
   return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
+    error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
   );
 }

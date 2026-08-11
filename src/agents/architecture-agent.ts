@@ -17,10 +17,7 @@ export class ArchitectureAgent extends BaseAgent {
     super({ ...options, id: "ARCH", tools: ARCH_TOOLS });
   }
 
-  protected async execute(
-    _input: StageInput,
-    ctx: TaskContext,
-  ): Promise<StageOutput> {
+  protected async execute(_input: StageInput, ctx: TaskContext): Promise<StageOutput> {
     if (ctx.plan === null) throw new StageFailure("ARCH requires a completed plan");
     const response = await this.completeJson(
       ctx,
@@ -57,9 +54,7 @@ export class ArchitectureAgent extends BaseAgent {
 
 function renderArchitecture(architecture: ArchDecision): string {
   const decisions = architecture.decisions.map((item) => `- ${item}`).join("\n");
-  const files = architecture.files
-    .map((file) => `- \`${file.path}\`: ${file.purpose}`)
-    .join("\n");
+  const files = architecture.files.map((file) => `- \`${file.path}\`: ${file.purpose}`).join("\n");
   const risks = architecture.risks.map((item) => `- ${item}`).join("\n");
   return `# Architecture Decision\n\n## Decisions\n\n${decisions}\n\n## Files\n\n${files}\n\n## Risks\n\n${risks}\n\n## Summary\n\n${architecture.summary}\n`;
 }

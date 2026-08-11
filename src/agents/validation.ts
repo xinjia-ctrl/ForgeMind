@@ -1,9 +1,6 @@
 import { StageFailure } from "../core/errors.js";
 
-export function requiredString(
-  value: Record<string, unknown>,
-  key: string,
-): string {
+export function requiredString(value: Record<string, unknown>, key: string): string {
   const result = value[key];
   if (typeof result !== "string" || result.trim().length === 0) {
     throw new StageFailure(`${key} must be a non-empty string`);
@@ -11,10 +8,7 @@ export function requiredString(
   return result.trim();
 }
 
-export function requiredBoolean(
-  value: Record<string, unknown>,
-  key: string,
-): boolean {
+export function requiredBoolean(value: Record<string, unknown>, key: string): boolean {
   const result = value[key];
   if (typeof result !== "boolean") {
     throw new StageFailure(`${key} must be a boolean`);
@@ -22,10 +16,7 @@ export function requiredBoolean(
   return result;
 }
 
-export function stringArray(
-  value: Record<string, unknown>,
-  key: string,
-): string[] {
+export function stringArray(value: Record<string, unknown>, key: string): string[] {
   const result = value[key];
   if (
     !Array.isArray(result) ||
@@ -43,9 +34,7 @@ export function objectArray(
   const result = value[key];
   if (
     !Array.isArray(result) ||
-    !result.every(
-      (item) => typeof item === "object" && item !== null && !Array.isArray(item),
-    )
+    !result.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))
   ) {
     throw new StageFailure(`${key} must be an array of objects`);
   }

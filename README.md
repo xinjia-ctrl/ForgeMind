@@ -44,6 +44,8 @@ node dist/src/runtime/cli.js run \
   --test-command "npm run test"
 ```
 
+Git commit hooks run by default. For a trusted automation-only repository, they can be explicitly bypassed with `--skip-git-hooks`; this choice is included in the tool-policy audit record.
+
 ## Replay
 
 Run events live under the target repository's Git metadata directory, so they do not pollute the generated commit:
@@ -54,14 +56,15 @@ node dist/src/runtime/cli.js replay \
   --run-id <run-id>
 ```
 
+`workflowTrace` and `workflowSignature` normalize those events into a stable process signature so identical inputs can be checked for the same stage sequence, tool outcomes, and gate decisions.
+
 ## Quality checks
 
 ```bash
-npm run typecheck
-npm test
+npm run check
 ```
 
-The test suite covers state transitions and rework limits, token budgets, path and symlink safety, command policy, the versioned event/replay contract, and an end-to-end workflow that runs a real `node --test` command and creates a real Git commit using a deterministic fake LLM.
+The quality gate runs strict TypeScript checks, type-aware ESLint, Prettier verification, and 23 tests. Coverage includes state transitions, rework limits, token budgets, UTF-8 truncation, path and symlink safety, Git hooks, command policy, the versioned event/replay contract, and end-to-end workflows that run real tests, create real commits, and compare reproducibility signatures.
 
 ## Security boundary
 

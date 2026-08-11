@@ -1,10 +1,5 @@
 import { StageFailure } from "../core/errors.js";
-import type {
-  ChatCompletion,
-  ChatMessage,
-  ChatOptions,
-  ChatProvider,
-} from "./chat-provider.js";
+import type { ChatCompletion, ChatMessage, ChatOptions, ChatProvider } from "./chat-provider.js";
 
 interface ProviderOptions {
   readonly apiKey: string;
@@ -22,10 +17,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
       throw new StageFailure("An API key is required");
     }
     this.#apiKey = options.apiKey;
-    this.#baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(
-      /\/$/,
-      "",
-    );
+    this.#baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
     this.#timeoutMs = options.timeoutMs ?? 120_000;
   }
 
@@ -56,9 +48,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
 
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 1_000);
-      throw new StageFailure(
-        `LLM request returned HTTP ${response.status}: ${detail}`,
-      );
+      throw new StageFailure(`LLM request returned HTTP ${response.status}: ${detail}`);
     }
 
     const body = (await response.json()) as {

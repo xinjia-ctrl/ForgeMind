@@ -23,8 +23,5 @@ export interface ChatCompletion {
 }
 
 export interface ChatProvider {
-  complete(
-    messages: readonly ChatMessage[],
-    options: ChatOptions,
-  ): Promise<ChatCompletion>;
+  complete(messages: readonly ChatMessage[], options: ChatOptions): Promise<ChatCompletion>;
 }

@@ -20,6 +20,7 @@ interface AgentFactoryOptions {
   readonly workspaceRoot: string;
   readonly budgets: TokenBudgets;
   readonly testCommand: readonly string[];
+  readonly skipGitHooks: boolean;
 }
 
 export interface AgentFactory {
@@ -100,12 +101,10 @@ function policyFor(
     ...(stage === "PLAN" || stage === "ARCH"
       ? { writablePrefixes: [`docs/.forgemind/${options.runId}`] }
       : {}),
-    ...(stage === "CODE"
-      ? { forbiddenWritePrefixes: ["docs/.forgemind"] }
-      : {}),
+    ...(stage === "CODE" ? { forbiddenWritePrefixes: ["docs/.forgemind"] } : {}),
     ...(stage === "TEST" ? { allowedCommands: [options.testCommand] } : {}),
-    maxResultBytes:
-      stage === "CODE" ? 128_000 : stage === "REVIEW" ? 72_000 : 32_000,
+    ...(stage === "COMMIT" ? { skipGitHooks: options.skipGitHooks } : {}),
+    maxResultBytes: stage === "CODE" ? 128_000 : stage === "REVIEW" ? 72_000 : 32_000,
     commandTimeoutMs: stage === "TEST" ? 300_000 : 120_000,
   });
 }

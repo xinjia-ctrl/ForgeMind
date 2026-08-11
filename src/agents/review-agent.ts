@@ -1,9 +1,4 @@
-import type {
-  GateResult,
-  StageInput,
-  StageOutput,
-  TaskContext,
-} from "../core/types.js";
+import type { GateResult, StageInput, StageOutput, TaskContext } from "../core/types.js";
 import type { ToolResult } from "../tools/types.js";
 import type { BaseAgentOptions } from "./base-agent.js";
 import { BaseAgent } from "./base-agent.js";
@@ -16,10 +11,7 @@ export class ReviewAgent extends BaseAgent {
     super({ ...options, id: "REVIEW", tools: REVIEW_TOOLS });
   }
 
-  protected async execute(
-    input: StageInput,
-    ctx: TaskContext,
-  ): Promise<StageOutput> {
+  protected async execute(input: StageInput, ctx: TaskContext): Promise<StageOutput> {
     const diffResult = await this.requireTool("git_diff", {});
     const diff = extractDiff(diffResult);
     if (diffResult.truncated === true) {

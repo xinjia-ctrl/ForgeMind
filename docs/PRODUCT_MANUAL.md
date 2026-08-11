@@ -13,15 +13,15 @@ ForgeMind 是一个多 Agent 协作的软件研发编排器：输入一条自然
 
 ## 2. 产品边界（当前版本）
 
-| 项 | 现状 |
-|---|---|
-| 输入 | 一条自然语言需求（≤ 100,000 字符） |
-| 输出 | 一个 Git commit + 全流程事件日志（JSONL） |
-| 运行环境 | 本地机器，目标仓库必须干净（无未提交变更） |
-| 模型 | 任意 OpenAI 兼容 Chat Completions 接口（`gpt-4.1-mini` 默认） |
-| 测试执行 | 真实运行测试命令（默认 `npm test`，可显式指定） |
-| 长期记忆 | 无（一次 Run 即独立上下文） |
-| 可视化 | 无（事件回放以 JSON 输出，可自行做 UI） |
+| 项       | 现状                                                                      |
+| -------- | ------------------------------------------------------------------------- |
+| 输入     | 一条自然语言需求（≤ 100,000 字符）                                        |
+| 输出     | 一个 Git commit + 全流程事件日志（JSONL）                                 |
+| 运行环境 | 本地机器，目标仓库必须干净（无未提交变更）                                |
+| 模型     | 任意 OpenAI 兼容 Chat Completions 接口（`gpt-4.1-mini` 默认）             |
+| 测试执行 | 真实运行测试命令（自动探测 package test，回退 `node --test`，可显式指定） |
+| 长期记忆 | 无（一次 Run 即独立上下文）                                               |
+| 可视化   | 无（事件回放以 JSON 输出，可自行做 UI）                                   |
 
 ## 3. 使用前置条件
 
@@ -78,15 +78,16 @@ COMMIT→ 通过全部门禁后创建 commit（不自动合并分支）
 forge-mind run --repo <path> --requirement <text> [选项]
 ```
 
-| 选项 | 说明 | 默认 |
-|---|---|---|
-| `--repo` | 目标仓库绝对路径 | 必填 |
-| `--requirement` | 自然语言需求 | 必填 |
-| `--model` | 模型名 | `FORGEMIND_MODEL` 或 `gpt-4.1-mini` |
-| `--base-url` | OpenAI 兼容服务地址 | `OPENAI_BASE_URL` 或官方地址 |
-| `--run-id` | 自定义运行 ID（字母数字 `._-`，≤128） | 自动生成 |
-| `--test-command` | 显式测试命令 | 自动探测 `package.json` 的 test 脚本 |
-| `--max-rework` | 返工上限 | 3 |
+| 选项               | 说明                                  | 默认                                 |
+| ------------------ | ------------------------------------- | ------------------------------------ |
+| `--repo`           | 目标仓库绝对路径                      | 必填                                 |
+| `--requirement`    | 自然语言需求                          | 必填                                 |
+| `--model`          | 模型名                                | `FORGEMIND_MODEL` 或 `gpt-4.1-mini`  |
+| `--base-url`       | OpenAI 兼容服务地址                   | `OPENAI_BASE_URL` 或官方地址         |
+| `--run-id`         | 自定义运行 ID（字母数字 `._-`，≤128） | 自动生成                             |
+| `--test-command`   | 显式测试命令                          | 自动探测 `package.json` 的 test 脚本 |
+| `--max-rework`     | 返工上限                              | 3                                    |
+| `--skip-git-hooks` | 显式跳过 Git commit hooks             | false（默认执行 hooks）              |
 
 ### 回放
 
@@ -94,7 +95,7 @@ forge-mind run --repo <path> --requirement <text> [选项]
 forge-mind replay --repo <path> --run-id <run-id>
 ```
 
-输出按序排列的完整事件时间线（每一步的 LLM 调用、工具调用、门禁判定），用于演示与审计。
+输出按序排列的完整事件时间线（每一步的 LLM 调用、工具调用、门禁判定）及 `workflowSignature`，用于演示、审计与流程一致性比较。
 
 ## 7. 产物与可观测性
 
@@ -102,6 +103,7 @@ forge-mind replay --repo <path> --run-id <run-id>
 - **事件日志**：`.git/forgemind/runs/<run-id>.jsonl`（不进入 commit，不污染产出）
 - **事件类型**：`run.started / stage.started / llm.called / tool.called / artifact.produced / gate.rejected / gate.passed / stage.completed / stage.failed / run.finished`
 - **门禁判定**：REVIEW 以 diff 指纹（sha256）锚定，防止"审查后工作区又变了"；COMMIT 前强制复核 diff 指纹一致。
+- **流程签名**：`workflowSignature` 忽略时间戳、runId、commit sha 等非确定数据，对事件顺序、阶段、工具结果和门禁结果生成稳定 sha256。
 
 ## 8. 安全边界（当前版本，使用者须知）
 
@@ -111,20 +113,22 @@ forge-mind replay --repo <path> --run-id <run-id>
 - 工具按阶段白名单：REVIEW/TEST 只读，CODE 可写但禁写 `docs/.forgemind` 与 `.git`
 - 路径安全：目录穿越、symlink 逃逸、Git 元数据访问均被拒绝
 - 审计脱敏：事件日志对密钥/内容类字段脱敏、超长截断
+- Git hooks 默认执行；仅显式 `--skip-git-hooks` 时跳过，并在 ToolPolicy 审计描述中记录
 
 > ⚠️ **仅对受信任的仓库运行**。生产级沙箱与审批网关规划在 Phase 3。
 
 ## 9. 已知限制与失败场景
 
-| 场景 | 行为 |
-|---|---|
-| 目标仓库有未提交变更 | 拒绝执行（HardFailure） |
-| 无 LLM API Key | 拒绝执行 |
-| LLM 返回非 JSON / 缺字段 | 阶段失败，Run 失败 |
-| REVIEW diff 超限截断 | 直接驳回并提示缩小变更 |
-| TEST 超时（默认 5 分钟）/输出超限 | 视为测试失败 |
-| 返工超限 | FAILED，保留现场 |
-| 无效 run-id / 重复 run-id | 拒绝（FatalFailure） |
+| 场景                              | 行为                    |
+| --------------------------------- | ----------------------- |
+| 目标仓库有未提交变更              | 拒绝执行（HardFailure） |
+| 无 LLM API Key                    | 拒绝执行                |
+| LLM 返回非 JSON / 缺字段          | 阶段失败，Run 失败      |
+| REVIEW diff 超限截断              | 直接驳回并提示缩小变更  |
+| TEST 超时（默认 5 分钟）/输出超限 | 视为测试失败            |
+| 返工超限                          | FAILED，保留现场        |
+| 无效 run-id / 重复 run-id         | 拒绝（FatalFailure）    |
+| Git commit hook 失败              | FAILED，保留分支供处理  |
 
 ## 10. 常见问题
 

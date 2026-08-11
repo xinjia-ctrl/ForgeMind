@@ -1,15 +1,9 @@
 import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { errorMessage } from "../core/errors.js";
 import { estimateTokens } from "../core/token-budget.js";
+import { truncateUtf8 } from "../core/text.js";
 import { relativeWorkspacePath, resolveWorkspacePath } from "./path-safety.js";
 import type { Tool, ToolPolicy, ToolResult } from "./types.js";
 
@@ -155,18 +149,18 @@ async function atomicWrite(target: string, content: string): Promise<void> {
 function countOccurrences(content: string, search: string): number {
   let count = 0;
   let cursor = 0;
-  while (true) {
-    const index = content.indexOf(search, cursor);
-    if (index < 0) return count;
+  let index = content.indexOf(search, cursor);
+  while (index >= 0) {
     count += 1;
     cursor = index + search.length;
+    index = content.indexOf(search, cursor);
   }
+  return count;
 }
 
 function boundText(text: string, maxBytes: number): { text: string; truncated: boolean } {
-  const buffer = Buffer.from(text, "utf8");
-  if (buffer.byteLength <= maxBytes) return { text, truncated: false };
-  return { text: buffer.subarray(0, maxBytes).toString("utf8"), truncated: true };
+  const result = truncateUtf8(text, maxBytes);
+  return { text: result.text, truncated: result.truncated };
 }
 
 export function objectArgs(args: unknown): Record<string, unknown> {
@@ -182,11 +176,7 @@ export function stringArg(value: Record<string, unknown>, key: string): string {
   return result;
 }
 
-function positiveIntegerArg(
-  value: Record<string, unknown>,
-  key: string,
-  fallback: number,
-): number {
+function positiveIntegerArg(value: Record<string, unknown>, key: string, fallback: number): number {
   const result = value[key];
   if (result === undefined) return fallback;
   if (!Number.isInteger(result) || (result as number) < 1) {

@@ -1,22 +1,9 @@
 import { errorMessage, FatalFailure } from "./errors.js";
 import type { AgentFactory } from "./agent-factory.js";
-import {
-  withArchitecture,
-  withArtifacts,
-  withAttempt,
-  withGate,
-  withPlan,
-} from "./context.js";
+import { withArchitecture, withArtifacts, withAttempt, withGate, withPlan } from "./context.js";
 import type { EventLog } from "./event-log.js";
 import type { MemoryProvider } from "../memory/memory-provider.js";
-import type {
-  ArtifactRef,
-  RunResult,
-  RunStatus,
-  StageId,
-  StageOutput,
-  TaskContext,
-} from "./types.js";
+import type { ArtifactRef, RunResult, RunStatus, StageId, TaskContext } from "./types.js";
 
 interface OrchestratorOptions {
   readonly eventLog: EventLog;
@@ -64,11 +51,7 @@ export class Orchestrator {
       if (architectureOutput.kind !== "architecture") {
         throw new FatalFailure("ARCH returned wrong output kind");
       }
-      ctx = withArchitecture(
-        ctx,
-        architectureOutput.architecture,
-        architectureOutput.artifact,
-      );
+      ctx = withArchitecture(ctx, architectureOutput.architecture, architectureOutput.artifact);
       await this.remember(ctx, [architectureOutput.artifact]);
 
       let feedback: string | undefined;
@@ -133,107 +116,20 @@ export class Orchestrator {
     }
   }
 
-  private async executeStage(
-    stage: StageId,
-    attempt: number,
-    ctx: TaskContext,
-    feedback?: string,
-  ): Promise<StageOutput> {
-    await this.#eventLog.append({
-      type: "stage.started",
-      data: { runId: ctx.runId, stage, attempt },
-    });
-    try {
-      const agent = this.#agentFactory.create(stage);
-      const output = await agent.run(
-        { attempt, ...(feedback === undefined ? {} : { feedback }) },
-        ctx,
-      );
-      await this.recordOutput(ctx, output);
-      await this.#eventLog.append({
-        type: "stage.completed",
-        data: { runId: ctx.runId, stage, status: "SUCCEEDED" },
-      });
-      return output;
-    } catch (error) {
-      await this.#eventLog.append({
-        type: "stage.failed",
-        data: {
-          runId: ctx.runId,
-          stage,
-          error: errorMessage(error),
-          ...(error instanceof Error && error.stack !== undefined
-            ? { stack: error.stack }
-            : {}),
-        },
-      });
-      throw error;
-    }
-  }
-
-  private async recordOutput(ctx: TaskContext, output: StageOutput): Promise<void> {
-    for (const artifact of outputArtifacts(output)) {
-      await this.#eventLog.append({
-        type: "artifact.produced",
-        data: {
-          runId: ctx.runId,
-          stage: artifact.stage,
-          path: artifact.path,
-          kind: artifact.kind,
-          summary: artifact.summary,
-        },
-      });
-    }
-    if (output.kind === "gate") {
-      await this.#eventLog.append(
-        output.gate.passed
-          ? {
-              type: "gate.passed",
-              data: {
-                runId: ctx.runId,
-                stage: output.gate.stage,
-                evidence: output.gate.evidence,
-              },
-            }
-          : {
-              type: "gate.rejected",
-              data: {
-                runId: ctx.runId,
-                stage: output.gate.stage,
-                reason: output.gate.reason,
-                feedback: output.gate.feedback,
-              },
-            },
-      );
-    }
+  private async executeStage(stage: StageId, attempt: number, ctx: TaskContext, feedback?: string) {
+    const agent = this.#agentFactory.create(stage);
+    return await agent.run({ attempt, ...(feedback === undefined ? {} : { feedback }) }, ctx);
   }
 
   private async remember(ctx: TaskContext, artifacts: readonly ArtifactRef[]): Promise<void> {
     for (const artifact of artifacts) await this.#memory.remember(ctx, artifact);
   }
 
-  private async finish(
-    ctx: TaskContext,
-    status: RunStatus,
-    summary: string,
-  ): Promise<RunResult> {
+  private async finish(ctx: TaskContext, status: RunStatus, summary: string): Promise<RunResult> {
     await this.#eventLog.append({
       type: "run.finished",
       data: { runId: ctx.runId, status, summary },
     });
     return { status, context: ctx, summary };
-  }
-}
-
-function outputArtifacts(output: StageOutput): readonly ArtifactRef[] {
-  switch (output.kind) {
-    case "plan":
-    case "architecture":
-    case "commit":
-      return [output.artifact];
-    case "code":
-      return output.artifacts;
-    case "gate":
-      return [];
   }
 }

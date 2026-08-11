@@ -1,13 +1,7 @@
 import type { BaseAgentOptions } from "./base-agent.js";
 import { BaseAgent } from "./base-agent.js";
 import { objectArray, requiredString, stringArray } from "./validation.js";
-import type {
-  ArtifactRef,
-  StageInput,
-  StageOutput,
-  TaskContext,
-  TaskPlan,
-} from "../core/types.js";
+import type { ArtifactRef, StageInput, StageOutput, TaskContext, TaskPlan } from "../core/types.js";
 
 export const PLAN_TOOLS = ["write_file"] as const;
 
@@ -16,10 +10,7 @@ export class PlanAgent extends BaseAgent {
     super({ ...options, id: "PLAN", tools: PLAN_TOOLS });
   }
 
-  protected async execute(
-    _input: StageInput,
-    ctx: TaskContext,
-  ): Promise<StageOutput> {
+  protected async execute(_input: StageInput, ctx: TaskContext): Promise<StageOutput> {
     const response = await this.completeJson(
       ctx,
       [

@@ -74,10 +74,5 @@ function describe(event: ForgeMindEvent): string {
 }
 
 function toolSucceeded(result: unknown): boolean {
-  return (
-    typeof result === "object" &&
-    result !== null &&
-    "ok" in result &&
-    result.ok === true
-  );
+  return typeof result === "object" && result !== null && "ok" in result && result.ok === true;
 }

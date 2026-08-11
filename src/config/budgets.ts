@@ -9,9 +9,6 @@ export const DEFAULT_TOKEN_BUDGETS: TokenBudgets = Object.freeze({
   COMMIT: { input: 2_000, output: 500 },
 });
 
-export function budgetFor(
-  budgets: TokenBudgets,
-  stage: StageId,
-): TokenBudget {
+export function budgetFor(budgets: TokenBudgets, stage: StageId): TokenBudget {
   return budgets[stage];
 }
