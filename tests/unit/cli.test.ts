@@ -29,6 +29,15 @@ describe("CLI validation", () => {
       1,
     );
   });
+
+  it("rejects conflicting approval flags before reading credentials", async () => {
+    assert.equal(
+      await withMutedStderr(() =>
+        main(["run", "--repo", ".", "--requirement", "x", "--yes", "--no-approve"]),
+      ),
+      1,
+    );
+  });
 });
 
 async function withMutedStderr(action: () => Promise<number>): Promise<number> {

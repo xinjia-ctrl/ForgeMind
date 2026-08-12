@@ -35,6 +35,27 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
             operation: event.data.tool,
             outcome: toolSucceeded(event.data.result) ? "passed" : "failed",
           };
+        case "approval.requested":
+          return {
+            type: event.type,
+            stage: event.data.stage,
+            operation: event.data.tool,
+            outcome: "requested",
+          };
+        case "approval.approved":
+          return {
+            type: event.type,
+            stage: event.data.stage,
+            operation: event.data.tool,
+            outcome: "approved",
+          };
+        case "approval.rejected":
+          return {
+            type: event.type,
+            stage: event.data.stage,
+            operation: event.data.tool,
+            outcome: "rejected",
+          };
         case "artifact.produced":
           return {
             type: event.type,

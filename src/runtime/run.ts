@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { DEFAULT_TOKEN_BUDGETS } from "../config/budgets.js";
+import { loadPolicyConfig, type ForgeMindPolicyConfig } from "../config/policy.js";
 import { DefaultAgentFactory } from "../core/agent-factory.js";
 import { createTaskContext } from "../core/context.js";
 import { assertValidRunId, EventLog } from "../core/event-log.js";
@@ -8,6 +9,12 @@ import { Orchestrator } from "../core/orchestrator.js";
 import type { RunResult } from "../core/types.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
 import { NoopMemoryProvider } from "../memory/noop-memory-provider.js";
+import { AutoApprovalGateway } from "../policy/auto-gateway.js";
+import { DenyApprovalGateway, type ApprovalGateway } from "../policy/gateway.js";
+import { InteractiveApprovalGateway } from "../policy/interactive-gateway.js";
+import { RulePolicyResolver } from "../policy/resolver.js";
+import { createProcessRunner } from "../sandbox/detect.js";
+import type { ProcessRunner } from "../sandbox/types.js";
 import { createDefaultToolRegistry } from "../tools/index.js";
 import { inspectGitWorkspace, prepareGitWorkspace } from "./git-workspace.js";
 import { resolveTestCommand } from "./test-command.js";
@@ -21,6 +28,12 @@ export interface RunOptions {
   readonly testCommand?: string;
   readonly maxRework?: number;
   readonly skipGitHooks?: boolean;
+  readonly configPath?: string;
+  readonly approveAll?: boolean;
+  readonly noApprove?: boolean;
+  readonly policyConfig?: ForgeMindPolicyConfig;
+  readonly processRunner?: ProcessRunner;
+  readonly approvalGateway?: ApprovalGateway;
 }
 
 export interface RunExecution {
@@ -41,10 +54,23 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   ) {
     throw new Error("maxRework must be a non-negative integer");
   }
+  if (options.approveAll === true && options.noApprove === true) {
+    throw new Error("approveAll and noApprove cannot both be enabled");
+  }
   const runId = options.runId ?? createRunId();
   assertValidRunId(runId);
   const inspected = await inspectGitWorkspace(options.repoPath);
   const testCommand = await resolveTestCommand(inspected.root, options.testCommand);
+  const policyConfig =
+    options.policyConfig ??
+    (await loadPolicyConfig({
+      repositoryRoot: inspected.root,
+      testCommand,
+      ...(options.configPath === undefined ? {} : { explicitPath: options.configPath }),
+    }));
+  const processRunner = options.processRunner ?? (await createProcessRunner(policyConfig.sandbox));
+  const approvalGateway = options.approvalGateway ?? approvalGatewayFor(options);
+  const policyResolver = new RulePolicyResolver(policyConfig.defaultMode, policyConfig.rules);
   const workspace = await prepareGitWorkspace(options.repoPath, runId);
   const eventsDirectory = path.join(workspace.gitDirectory, "forgemind", "runs");
   const eventLog = await EventLog.create(eventsDirectory, runId);
@@ -59,12 +85,14 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
     provider: options.provider,
     model: options.model,
     eventLog,
-    registry: createDefaultToolRegistry(),
+    registry: createDefaultToolRegistry(processRunner),
     runId,
     workspaceRoot: workspace.root,
     budgets: DEFAULT_TOKEN_BUDGETS,
     testCommand,
     skipGitHooks: options.skipGitHooks ?? false,
+    policyResolver,
+    approvalGateway,
   });
   const orchestrator = new Orchestrator({
     eventLog,
@@ -74,6 +102,14 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   });
   const result = await orchestrator.run(context);
   return { result, eventLogPath: eventLog.filePath };
+}
+
+function approvalGatewayFor(options: RunOptions): ApprovalGateway {
+  if (options.approveAll === true) return new AutoApprovalGateway();
+  if (options.noApprove === true || !process.stdin.isTTY || !process.stdout.isTTY) {
+    return new DenyApprovalGateway();
+  }
+  return new InteractiveApprovalGateway({ input: process.stdin, output: process.stdout });
 }
 
 function createRunId(): string {

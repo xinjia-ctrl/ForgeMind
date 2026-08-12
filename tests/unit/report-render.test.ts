@@ -60,6 +60,16 @@ describe("report HTML rendering", () => {
         status: "FAILED",
         summary: "Policy denied",
       }),
+      event(7, "approval.rejected", {
+        runId: "secure-run",
+        stage: "COMMIT",
+        tool: "git_commit",
+        action: { args: { content: "PRIVATE APPROVAL" } },
+        policy: "rule:9:approve",
+        mode: "approve",
+        reason: "User rejected <script>alert(3)</script>",
+        decisionSource: "interactive",
+      }),
     ]);
 
     const html = renderReportHtml(model);
@@ -78,6 +88,10 @@ describe("report HTML rendering", () => {
     assert.doesNotMatch(html, /@import/i);
     assert.match(html, /Stage statistics/);
     assert.match(html, /Workflow timeline/);
+    assert.match(html, /SECURITY AUDIT/);
+    assert.match(html, /Policy and approval decisions/);
+    assert.match(html, /User rejected &lt;script&gt;alert\(3\)&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /PRIVATE APPROVAL/);
 
     const tamperedHtml = renderReportHtml({
       ...model,

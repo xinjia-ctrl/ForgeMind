@@ -58,6 +58,12 @@ function describe(event: ForgeMindEvent): string {
       return `${event.data.model}: ${event.data.inputTokens} input / ${event.data.outputTokens} output tokens`;
     case "tool.called":
       return `${event.data.tool}: ${toolSucceeded(event.data.result) ? "ok" : "failed"}`;
+    case "approval.requested":
+      return `Approval requested for ${event.data.tool}`;
+    case "approval.approved":
+      return `Approved ${event.data.tool} by ${event.data.decisionSource}`;
+    case "approval.rejected":
+      return `Rejected ${event.data.tool}: ${event.data.reason}`;
     case "artifact.produced":
       return `${event.data.kind}: ${event.data.path}`;
     case "gate.rejected":

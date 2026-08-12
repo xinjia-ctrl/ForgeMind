@@ -1,6 +1,6 @@
 # ForgeMind 产品使用手册
 
-> 版本：v0.3（对齐已实现代码）
+> 版本：v0.4（对齐已实现代码）
 > 说明：本手册面向使用者，描述**当前代码实际具备**的产品能力，不含规划中未实现的功能。
 
 ---
@@ -17,7 +17,7 @@ ForgeMind 是一个多 Agent 协作的软件研发编排器：输入一条自然
 | -------- | ------------------------------------------------------------------------- |
 | 输入     | 一条自然语言需求（≤ 100,000 字符）                                        |
 | 输出     | 一个 Git commit + 全流程事件日志（JSONL）+ 可选单文件 HTML 报告           |
-| 运行环境 | 本地机器，目标仓库必须干净（无未提交变更）                                |
+| 运行环境 | 目标仓库必须干净；测试命令默认在 Docker/Podman 容器沙箱执行               |
 | 模型     | 任意 OpenAI 兼容 Chat Completions 接口（`gpt-4.1-mini` 默认）             |
 | 测试执行 | 真实运行测试命令（自动探测 package test，回退 `node --test`，可显式指定） |
 | 长期记忆 | 无（一次 Run 即独立上下文）                                               |
@@ -25,9 +25,10 @@ ForgeMind 是一个多 Agent 协作的软件研发编排器：输入一条自然
 
 ## 3. 使用前置条件
 
-1. Node.js ≥ 22，Git 已安装
+1. Node.js ≥ 22，Git 已安装；默认安全模式需 Docker 或 Podman
 2. 目标仓库：**干净的工作区** + **已有至少一个 commit** + **已配置 Git 作者**
 3. 环境变量：`OPENAI_API_KEY`（可自定义 `OPENAI_BASE_URL` 指向兼容服务）
+4. 策略配置包含使用 sha256 digest 固定的测试镜像
 
 ## 4. 快速开始
 
@@ -41,7 +42,8 @@ export FORGEMIND_MODEL="gpt-4.1-mini"
 # 在一个干净的仓库目录中：
 node dist/src/runtime/cli.js run \
   --repo /abs/path/to/target-repo \
-  --requirement "添加一个健康检查接口，并附上测试"
+  --requirement "添加一个健康检查接口，并附上测试" \
+  --config /abs/path/to/forgemind.config.json
 ```
 
 成功后终端输出：
@@ -87,6 +89,9 @@ forge-mind run --repo <path> --requirement <text> [选项]
 | `--run-id`         | 自定义运行 ID（字母数字 `._-`，≤128） | 自动生成                             |
 | `--test-command`   | 显式测试命令                          | 自动探测 `package.json` 的 test 脚本 |
 | `--max-rework`     | 返工上限                              | 3                                    |
+| `--config`         | 项目策略配置文件                      | 无；仍会读取全局/环境/仓库级配置     |
+| `--yes`            | 自动批准命中 `approve` 的动作         | false                                |
+| `--no-approve`     | 拒绝所有需审批动作                    | 非交互环境默认采用                   |
 | `--skip-git-hooks` | 显式跳过 Git commit hooks             | false（默认执行 hooks）              |
 
 ### 回放
@@ -110,20 +115,26 @@ forge-mind report --repo <path> --run-id <run-id>
 - 失败阶段、Stage/Hard/Fatal 类型和错误信息；
 - 各阶段 LLM token、工具调用数和可对账耗时；
 - 产物列表、审计后的工具详情与流程签名。
+- 安全审计面板：策略模式、审批请求/批准/拒绝、决策来源、时间和脱敏动作。
 
 ## 7. 产物与可观测性
 
 - **工作区产物**：`docs/.forgemind/<run-id>/plan.md`、`architecture.md`
 - **事件日志**：`.git/forgemind/runs/<run-id>.jsonl`（不进入 commit，不污染产出）
 - **可视化报告**：`.git/forgemind/reports/<run-id>.html`（日志的只读投影，不是第二份事实源）
-- **事件类型**：`run.started / stage.started / llm.called / tool.called / artifact.produced / gate.rejected / gate.passed / stage.completed / stage.failed / run.finished`
+- **事件类型**：除运行、阶段、LLM、工具、产物和门禁事件外，包含 `approval.requested / approval.approved / approval.rejected` 安全决策事件
 - **门禁判定**：REVIEW 以 diff 指纹（sha256）锚定，防止"审查后工作区又变了"；COMMIT 前强制复核 diff 指纹一致。
 - **流程签名**：`workflowSignature` 忽略时间戳、runId、commit sha 等非确定数据，对事件顺序、阶段、工具结果和门禁结果生成稳定 sha256。
 
-## 8. 安全边界（当前版本，使用者须知）
+## 8. 安全策略与沙箱
 
-当前版本 `run_command` **直接在本机执行**，属明确的安全让步。防护措施：
+`run_command` 默认通过 Docker/Podman 沙箱执行。执行前依次经过阶段工具白名单、动作级三态策略和审批网关：
 
+- 策略模式：`allow` 自动放行、`approve` 需审批、`deny` 禁止；未命中规则默认拒绝
+- 配置顺序：内置安全默认 → `FORGEMIND_GLOBAL_CONFIG` → `FORGEMIND_POLICY_JSON` → `--config` → 仓库 `forgemind.config.json`，后层同具体度规则优先
+- 容器隔离：宿主工作区只读挂载到 `/source`，复制至 `/workspace` tmpfs 后测试；副产物不回传宿主
+- 资源限制：网络默认关闭，限制 CPU、内存、PID、超时和输出；丢弃 Linux capabilities，禁止提权
+- 镜像必须使用 `image@sha256:<digest>` 固定；无容器运行时或镜像未固定会在启动时失败
 - 命令白名单：只能运行 `npm/pnpm/yarn/bun/node` 的测试类命令，无 shell，禁路径穿越
 - 工具按阶段白名单：REVIEW/TEST 只读，CODE 可写但禁写 `docs/.forgemind` 与 `.git`
 - 路径安全：目录穿越、symlink 逃逸、Git 元数据访问均被拒绝
@@ -131,7 +142,30 @@ forge-mind report --repo <path> --run-id <run-id>
 - 报告安全：工具参数/结果二次脱敏，所有动态内容 HTML 转义，CSP 禁止外部资源与联网
 - Git hooks 默认执行；仅显式 `--skip-git-hooks` 时跳过，并在 ToolPolicy 审计描述中记录
 
-> ⚠️ **仅对受信任的仓库运行**。生产级沙箱与审批网关规划在 Phase 3。
+显式设置 `sandbox.mode=local` 可用于受信任环境的兼容测试，但必须同时使用 `defaultMode=deny`；本机进程仍会在事件中标记为 `local/host`，不会伪装成沙箱。
+
+最小配置示例：
+
+```json
+{
+  "defaultMode": "deny",
+  "rules": [
+    {
+      "match": { "stage": "COMMIT", "tool": "git_commit" },
+      "mode": "approve"
+    }
+  ],
+  "sandbox": {
+    "mode": "container",
+    "runtime": "auto",
+    "image": "your-image@sha256:<64位十六进制摘要>",
+    "cpu": 1,
+    "memoryMb": 512,
+    "pidsLimit": 128,
+    "network": false
+  }
+}
+```
 
 ## 9. 已知限制与失败场景
 
@@ -145,6 +179,10 @@ forge-mind report --repo <path> --run-id <run-id>
 | 返工超限                          | FAILED，保留现场        |
 | 无效 run-id / 重复 run-id         | 拒绝（FatalFailure）    |
 | Git commit hook 失败              | FAILED，保留分支供处理  |
+| 策略配置非法 / 镜像未固定         | 启动时 HardFailure      |
+| Docker/Podman 不可用              | 默认拒绝并给出降级指引  |
+| 审批拒绝 / 非交互环境未显式批准   | 动作不执行，Run FAILED  |
+| 容器 OOM / 超时 / 非零退出        | TEST 门禁失败并保留审计 |
 
 ## 10. 常见问题
 
@@ -159,3 +197,6 @@ forge-mind report --repo <path> --run-id <run-id>
 
 **Q：报告为什么不需要服务？**
 报告是内嵌 CSS/JavaScript 的单个 HTML 文件，所有数据都来自对应 Run 的 JSONL 事件日志；它不加载任何外链资源。
+
+**Q：CI 中如何处理审批？**
+在策略中保持危险动作是 `approve`，再显式传 `--yes`；事件会记录 `decisionSource=auto`。若希望 CI 验证必须拒绝审批，传 `--no-approve`。

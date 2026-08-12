@@ -17,12 +17,18 @@
     },
     {
       "seq": 3,
+      "type": "approval.rejected",
+      "stage": "PLAN",
+      "detail": "Rejected write_file: Action denied by policy"
+    },
+    {
+      "seq": 4,
       "type": "stage.failed",
       "stage": "PLAN",
       "detail": "Planning failed"
     },
     {
-      "seq": 4,
+      "seq": 5,
       "type": "run.finished",
       "stage": null,
       "detail": "FAILED: Planning failed"

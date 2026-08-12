@@ -150,6 +150,37 @@ describe("report view model", () => {
     assert.equal(report.stats.perStage.find((stats) => stats.stage === "CODE")?.durationMs, null);
   });
 
+  it("projects approval events into a re-audited security panel", () => {
+    const report = buildReportViewModel([
+      event(1, "approval.requested", {
+        runId: "security-run",
+        stage: "COMMIT",
+        tool: "git_commit",
+        action: { args: { content: "PRIVATE" } },
+        policy: "rule:8:approve",
+        mode: "approve",
+      }),
+      event(2, "approval.approved", {
+        runId: "security-run",
+        stage: "COMMIT",
+        tool: "git_commit",
+        action: { args: { content: "PRIVATE" } },
+        policy: "rule:8:approve",
+        mode: "approve",
+        decisionSource: "auto",
+      }),
+    ]);
+
+    assert.deepEqual(
+      report.security.map((item) => [item.decision, item.action, item.source]),
+      [
+        ["REQUESTED", "git_commit", undefined],
+        ["APPROVED", "git_commit", "auto"],
+      ],
+    );
+    assert.doesNotMatch(JSON.stringify(report.security), /PRIVATE/);
+  });
+
   it("keeps historical failures honest and handles an empty log", () => {
     const historical = buildReportViewModel([
       event(1, "stage.failed", {

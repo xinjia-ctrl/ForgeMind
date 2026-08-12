@@ -31,6 +31,8 @@ it("generates offline reports through the CLI for successful and failed runs", a
         assert.match(html, /FAILURE LOCATED/);
         assert.match(html, /TEST · STAGE/);
         assert.match(html, /Test command failed/);
+        assert.match(html, /SECURITY AUDIT/);
+        assert.match(html, /DENIED/);
       } else {
         assert.match(html, /SUCCEEDED/);
       }
@@ -69,6 +71,19 @@ async function createFailedRun(directory: string): Promise<void> {
   await log.append({
     type: "stage.started",
     data: { runId: "failed-report", stage: "TEST", attempt: 1 },
+  });
+  await log.append({
+    type: "approval.rejected",
+    data: {
+      runId: "failed-report",
+      stage: "TEST",
+      tool: "run_command",
+      action: { command: ["npm", "test"], args: { content: "PRIVATE" } },
+      policy: "rule:7:approve",
+      mode: "approve",
+      reason: "Approval denied",
+      decisionSource: "interactive",
+    },
   });
   await log.append({
     type: "stage.failed",

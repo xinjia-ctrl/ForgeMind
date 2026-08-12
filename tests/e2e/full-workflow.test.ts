@@ -7,8 +7,11 @@ import { EventLog } from "../../src/core/event-log.js";
 import { replay } from "../../src/core/replay.js";
 import { workflowSignature } from "../../src/core/reproducibility.js";
 import { FakeChatProvider } from "../../src/llm/fake-provider.js";
-import { runProcess } from "../../src/tools/process.js";
 import { runForgeMind } from "../../src/runtime/run.js";
+import { ContainerProcessRunner } from "../../src/sandbox/docker.js";
+import { runProcess } from "../../src/tools/process.js";
+
+const TEST_IMAGE = `node@sha256:${"a".repeat(64)}`;
 
 it("runs requirement through real tests and creates a Git commit", async () => {
   const repo = await createDemoRepository();
@@ -21,6 +24,8 @@ it("runs requirement through real tests and creates a Git commit", async () => {
       provider,
       model: "fake-model",
       runId: "e2e-run",
+      approveAll: true,
+      processRunner: createSandboxRunner(),
     });
 
     assert.equal(execution.result.status, "SUCCEEDED");
@@ -59,6 +64,8 @@ it("reproduces the workflow sequence and gate decisions for identical input", as
           provider: createDemoProvider(),
           model: "fake-model",
           runId: `reproducible-run-${index + 1}`,
+          approveAll: true,
+          processRunner: createSandboxRunner(),
         }),
       );
     }
@@ -101,6 +108,7 @@ it("persists the runtime failure classification in stage events", async () => {
       provider: new FakeChatProvider([]),
       model: "fake-model",
       runId: "classified-failure",
+      processRunner: createSandboxRunner(),
     });
 
     assert.equal(execution.result.status, "FAILED");
@@ -111,6 +119,41 @@ it("persists the runtime failure classification in stage events", async () => {
     const failure = events.find((event) => event.type === "stage.failed");
     assert.ok(failure);
     assert.equal(failure.data.kind, "STAGE");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+it("fails a complete run when the commit approval is rejected and audits the decision", async () => {
+  const repo = await createDemoRepository();
+  try {
+    const execution = await runForgeMind({
+      repoPath: repo,
+      requirement: "Add an integer addition function with tests",
+      provider: createDemoProvider(),
+      model: "fake-model",
+      runId: "approval-rejected-run",
+      noApprove: true,
+      processRunner: createSandboxRunner(),
+    });
+
+    assert.equal(execution.result.status, "FAILED");
+    assert.match(execution.result.summary, /Policy denied COMMIT\/git_commit/);
+    const events = await EventLog.open(
+      path.dirname(execution.eventLogPath),
+      "approval-rejected-run",
+    ).load();
+    assert.ok(events.some((event) => event.type === "approval.requested"));
+    assert.ok(
+      events.some(
+        (event) => event.type === "approval.rejected" && event.data.decisionSource === "disabled",
+      ),
+    );
+    const toolExecutions = events.filter((event) => event.type === "tool.called");
+    const testExecution = toolExecutions.find((event) => event.data.tool === "run_command");
+    assert.ok(testExecution);
+    assert.match(JSON.stringify(testExecution.data.result), /container/);
+    assert.match(JSON.stringify(testExecution.data.result), /node@sha256/);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -177,6 +220,26 @@ async function createDemoRepository(): Promise<string> {
     `${JSON.stringify({ name: "demo", private: true, type: "module", scripts: { test: "node --test" } }, null, 2)}\n`,
     "utf8",
   );
+  await writeFile(
+    path.join(repo, "forgemind.config.json"),
+    `${JSON.stringify(
+      {
+        defaultMode: "deny",
+        sandbox: {
+          mode: "container",
+          runtime: "docker",
+          image: TEST_IMAGE,
+          cpu: 1,
+          memoryMb: 256,
+          pidsLimit: 64,
+          network: false,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   await writeFile(path.join(repo, "src/math.js"), "// Math operations are added here.\n", "utf8");
   await git(repo, ["init"]);
   await git(repo, ["config", "user.name", "ForgeMind Test"]);
@@ -194,4 +257,21 @@ async function git(cwd: string, args: readonly string[]) {
   });
   assert.equal(result.exitCode, 0, result.stderr);
   return result;
+}
+
+function createSandboxRunner(): ContainerProcessRunner {
+  return new ContainerProcessRunner({
+    runtime: "docker",
+    image: TEST_IMAGE,
+    cpu: 1,
+    memoryMb: 256,
+    pidsLimit: 64,
+    network: false,
+    hostRunner: (_runtime, runtimeArgs, options) => {
+      const separator = runtimeArgs.indexOf("forgemind-entrypoint");
+      const command = runtimeArgs[separator + 1];
+      assert.ok(separator >= 0 && command !== undefined, "missing sandbox command boundary");
+      return runProcess(command, runtimeArgs.slice(separator + 2), options);
+    },
+  });
 }

@@ -23,6 +23,19 @@ it("keeps the versioned event and replay contract stable", async () => {
       data: { runId: "golden-run", stage: "PLAN", attempt: 1 },
     });
     await log.append({
+      type: "approval.rejected",
+      data: {
+        runId: "golden-run",
+        stage: "PLAN",
+        tool: "write_file",
+        action: { args: { content: "<redacted:12 bytes>" } },
+        policy: "rule:1:deny",
+        mode: "deny",
+        reason: "Action denied by policy",
+        decisionSource: "policy",
+      },
+    });
+    await log.append({
       type: "stage.failed",
       data: {
         runId: "golden-run",
@@ -42,7 +55,7 @@ it("keeps the versioned event and replay contract stable", async () => {
     const rawEvents = await log.load();
     assert.deepEqual(
       rawEvents.map((event) => event.seq),
-      [1, 2, 3, 4],
+      [1, 2, 3, 4, 5],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

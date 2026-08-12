@@ -27,6 +27,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         "test-command",
         "max-rework",
         "skip-git-hooks",
+        "config",
+        "yes",
+        "no-approve",
       ]);
       return await runCommand(parsed.values);
     }
@@ -75,6 +78,9 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
     throw new Error("--max-rework must be a non-negative integer");
   }
   const skipGitHooks = parseBooleanOption(values, "skip-git-hooks", false);
+  const approveAll = parseBooleanOption(values, "yes", false);
+  const noApprove = parseBooleanOption(values, "no-approve", false);
+  if (approveAll && noApprove) throw new Error("--yes and --no-approve cannot be combined");
   const apiKey = process.env["OPENAI_API_KEY"];
   if (apiKey === undefined || apiKey.length === 0) {
     throw new Error("OPENAI_API_KEY is required");
@@ -87,6 +93,7 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
   });
   const runId = values.get("run-id");
   const testCommand = values.get("test-command");
+  const configPath = values.get("config");
   const execution = await runForgeMind({
     repoPath,
     requirement,
@@ -96,6 +103,9 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
     ...(testCommand === undefined ? {} : { testCommand }),
     ...(maxRework === undefined ? {} : { maxRework }),
     skipGitHooks,
+    approveAll,
+    noApprove,
+    ...(configPath === undefined ? {} : { configPath }),
   });
   process.stdout.write(
     `${JSON.stringify(
@@ -130,7 +140,7 @@ async function replayCommand(values: ReadonlyMap<string, string>): Promise<numbe
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const command = argv[0] ?? "help";
   const values = new Map<string, string>();
-  const booleanOptions = new Set(["skip-git-hooks"]);
+  const booleanOptions = new Set(["skip-git-hooks", "yes", "no-approve"]);
   for (let index = 1; index < argv.length;) {
     const flag = argv[index];
     if (flag === undefined || !flag.startsWith("--")) {
@@ -181,7 +191,7 @@ function assertKnownOptions(values: ReadonlyMap<string, string>, allowed: readon
 
 function printHelp(): void {
   process.stdout.write(
-    `ForgeMind\n\nUsage:\n  forge-mind run --repo <path> --requirement <text> [--model <name>] [--test-command <command>] [--max-rework <n>] [--skip-git-hooks]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n\nEnvironment:\n  OPENAI_API_KEY      Required for run\n  OPENAI_BASE_URL     OpenAI-compatible API base URL\n  FORGEMIND_MODEL     Default model name\n`,
+    `ForgeMind\n\nUsage:\n  forge-mind run --repo <path> --requirement <text> [--model <name>] [--test-command <command>] [--max-rework <n>] [--config <path>] [--yes | --no-approve] [--skip-git-hooks]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n\nEnvironment:\n  OPENAI_API_KEY            Required for run\n  OPENAI_BASE_URL           OpenAI-compatible API base URL\n  FORGEMIND_MODEL           Default model name\n  FORGEMIND_GLOBAL_CONFIG   Global policy config path\n  FORGEMIND_POLICY_JSON     Environment policy override\n`,
   );
 }
 

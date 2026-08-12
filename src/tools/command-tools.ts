@@ -1,7 +1,7 @@
 import { errorMessage } from "../core/errors.js";
 import { estimateTokens } from "../core/token-budget.js";
+import type { ProcessRunner } from "../sandbox/types.js";
 import { objectArgs, stringArg } from "./file-tools.js";
-import { runProcess } from "./process.js";
 import type { Tool, ToolPolicy, ToolResult } from "./types.js";
 
 export class RunCommandTool implements Tool {
@@ -15,6 +15,11 @@ export class RunCommandTool implements Tool {
       args: { type: "array", items: { type: "string" } },
     },
   } as const;
+  readonly #runner: ProcessRunner;
+
+  public constructor(runner: ProcessRunner) {
+    this.#runner = runner;
+  }
 
   public async execute(args: unknown, policy: ToolPolicy): Promise<ToolResult> {
     try {
@@ -25,15 +30,26 @@ export class RunCommandTool implements Tool {
       if (!policy.allowsCommand(invocation)) {
         return { ok: false, error: `Command is not allowlisted: ${invocation.join(" ")}` };
       }
-      const result = await runProcess(command, commandArgs, {
-        cwd: policy.workspaceRoot,
-        timeoutMs: policy.commandTimeoutMs,
-        maxBytes: policy.maxResultBytes,
-      });
+      const result = await this.#runner.run(
+        { command, args: commandArgs },
+        {
+          cwd: policy.workspaceRoot,
+          timeoutMs: policy.commandTimeoutMs,
+          maxBytes: policy.maxResultBytes,
+        },
+      );
+      const succeeded = result.exitCode === 0 && result.timedOut !== true;
       return {
-        ok: result.exitCode === 0,
+        ok: succeeded,
         data: result,
-        ...(result.exitCode === 0 ? {} : { error: `Command exited with ${result.exitCode}` }),
+        ...(succeeded
+          ? {}
+          : {
+              error:
+                result.timedOut === true
+                  ? `Command timed out after ${policy.commandTimeoutMs}ms`
+                  : `Command exited with ${result.exitCode}`,
+            }),
         truncated: result.truncated,
         tokenCost: estimateTokens(`${result.stdout}\n${result.stderr}`),
       };

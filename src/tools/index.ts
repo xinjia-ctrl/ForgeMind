@@ -1,17 +1,18 @@
 import { RunCommandTool } from "./command-tools.js";
+import type { ProcessRunner } from "../sandbox/types.js";
 import { EditFileTool, ReadFileTool, WriteFileTool } from "./file-tools.js";
 import { GitCommitTool, GitDiffTool, GitStatusTool } from "./git-tools.js";
 import { GlobTool, GrepTool } from "./search-tools.js";
 import { ToolRegistry } from "./executor.js";
 
-export function createDefaultToolRegistry(): ToolRegistry {
+export function createDefaultToolRegistry(processRunner: ProcessRunner): ToolRegistry {
   return new ToolRegistry([
     new ReadFileTool(),
     new WriteFileTool(),
     new EditFileTool(),
     new GrepTool(),
     new GlobTool(),
-    new RunCommandTool(),
+    new RunCommandTool(processRunner),
     new GitStatusTool(),
     new GitDiffTool(),
     new GitCommitTool(),

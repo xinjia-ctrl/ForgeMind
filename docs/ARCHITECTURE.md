@@ -1,6 +1,6 @@
 # ForgeMind 架构设计文档（ADR）
 
-> 版本：v0.3（对齐 PRD v0.3，静态可观测性报告已实现，31/31 测试通过）
+> 版本：v0.4（对齐 PRD v0.4，安全策略、审批与沙箱已实现，45/45 测试通过）
 > 状态：已实现
 > 技术栈：TypeScript / Node（>=22），单一进程、运行时零第三方依赖（无 DB / MQ / 框架）
 
@@ -38,7 +38,8 @@ Orchestrator (src/core/orchestrator.ts)  —— 唯一决策中枢，持有 Run 
 StageAgent (src/agents/*)  —— 单次 LLM 调用，返回结构化 StageOutput
   │       │
   │       ├─ ChatProvider (src/llm/)  —— OpenAI 兼容 / Fake
-  │       └─ ScopedToolExecutor (src/tools/executor.ts)  —— 白名单 + 审计
+  │       └─ ScopedToolExecutor  —— 白名单 → 动作策略 → 审批 → 工具 + 审计
+  │                  └─ RunCommandTool → ProcessRunner → Docker/Podman 沙箱
   ▼
 EventLog (src/core/event-log.ts)  —— JSONL 持久化到 <git-dir>/forgemind/runs/<runId>.jsonl
   └→ replay (src/core/replay.ts)  —— 纯函数重建 Timeline
@@ -67,7 +68,9 @@ src/
 ├── memory/     # MemoryProvider 接口 + Noop
 ├── runtime/    # CLI、run 编排入口、Git 工作区、测试命令解析
 ├── report/     # 事件投影、HTML 纯渲染、报告 IO 装配
-└── config/     # budgets.ts（每阶段 Token 预算）
+├── policy/     # 动作级三态解析 + 审批网关
+├── sandbox/    # ProcessRunner + Docker/Podman/显式本机实现
+└── config/     # Token 预算 + 安全策略配置加载
 tests/
 ├── unit/       # orchestration / security / report view model + renderer / cli
 ├── golden/     # 事件 Schema 快照
@@ -106,6 +109,7 @@ EventLog 以 JSONL 落盘，事件形如 `{v:1, seq, ts, type, data}`，`EventDa
 | `stage.started` / `stage.completed` / `stage.failed` | stage, attempt / status / kind, error, stack                | 阶段生命周期   |
 | `llm.called`                                         | model, inputTokens, outputTokens, promptFingerprint(sha256) | 决策点 + 成本  |
 | `tool.called`                                        | tool, args, result, policy                                  | 审计（含脱敏） |
+| `approval.requested/approved/rejected`               | action, policy, mode, source/reason                         | 安全决策审计   |
 | `artifact.produced`                                  | path, kind, summary                                         | 产物追溯       |
 | `gate.rejected` / `gate.passed`                      | reason, feedback / evidence                                 | 门禁证据       |
 
@@ -208,6 +212,19 @@ CREATED → RUNNING → SUCCEEDED | FAILED
 - 仅允许测试调用形态（`node --test`、`npm test`、`npm run test`）。
 - 自动探测 `package.json.scripts.test`，可显式指定。
 
+### 7.5 Phase 3 安全执行链（ADR-6）
+
+`ScopedToolExecutor` 在既有阶段白名单之后叠加 `PolicyResolver`：规则支持 `allow / approve / deny`，命中优先级为 command 精确规则 > stage+tool > tool > `defaultMode`，同具体度后加载层优先。配置层从低到高为内置默认、全局文件、环境 JSON、`--config`、仓库 `forgemind.config.json`；未知字段或非法值直接 `HardFailure`。
+
+`approve` 由统一 `ApprovalGateway` 处理：TTY 交互、`--yes` 自动批准或 `--no-approve`/无 TTY 拒绝。请求、批准、拒绝分别落 `approval.*`，动作先经 `auditValue`。
+
+`RunCommandTool` 不再直接依赖宿主进程函数，而依赖注入的 `ProcessRunner`。生产默认 Docker/Podman：
+
+- 镜像必须使用 sha256 digest 固定；无可用运行时默认 fail-fast。
+- `/source` 是唯一宿主只读挂载；固定入口脚本复制到 `/workspace` tmpfs 后执行 argv，测试副产物不回传。
+- 默认 `--network=none`、`--read-only`、`--cap-drop ALL`、`no-new-privileges`，并限制 CPU、内存、PID、超时和输出。
+- `sandbox.mode=local` 仅是显式受信任降级，强制 `defaultMode=deny`，事件证据标记为 `local/host`。
+
 ---
 
 ## 8. 静态可观测性报告（Phase 2 P0）
@@ -225,6 +242,7 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 - 阶段失败或缺少 `stage.completed` 时，耗时为 `null`；不基于相邻事件猜测。旧日志缺少 `stage.failed.kind` 时展示 `UNKNOWN`，不根据错误字符串推断。
 - 最多渲染 2,000 条事件；超限时抽样普通事件，并优先保留失败、门禁和失败工具调用。
 - 工具 `args/result` 在报告投影时再次调用共享 `auditValue`；CSP 禁止外部资源，报告可完全离线打开。
+- 安全事件面板投影 `approval.*` 与策略化 `tool.called`，展示 ALLOWED/REQUESTED/APPROVED/DENIED、决策来源、时间和脱敏详情。
 
 ---
 
@@ -240,16 +258,17 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 
 ---
 
-## 10. 安全边界（MVP 本地执行）
+## 10. 安全边界（Phase 3）
 
-PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3。MVP 的本地执行边界是**明确让步**，通过以下措施收窄：
+安全采用三层纵深：阶段级最小权限、动作级策略/审批、容器运行隔离。任一层缺失不会静默降级：
 
 1. deny-by-default 阶段策略（含只读 REVIEW/TEST）。
 2. 命令/工具精确白名单，无 shell。
 3. 路径包含 + symlink 逃逸防护 + `.git` 禁访。
 4. 输出字节截断 + 审计脱敏 + 全量事件落盘。
 5. `git_commit` 默认执行仓库 hooks；hooks 失败时 Run 失败并保留分支。仅用户显式传入 `--skip-git-hooks` 才使用 `--no-verify`，且策略写入审计事件。
-6. 部署约束：仅在可信仓库上运行。
+6. 测试进程默认容器沙箱；宿主仅用于显式受信任降级。
+7. 所有批准、拒绝和沙箱证据进入事件日志并由报告展示。
 
 ---
 
@@ -265,11 +284,11 @@ PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3�
 
 `BaseAgent` 在 `stage.failed` 写入分类；该字段保持可选以兼容 v0.2 日志。未分类的运行时异常按框架级 `FATAL` 处理，避免未知错误静默降级。
 
-### 11.2 测试策略（31/31 通过，`npm test` = build + `node --test`）
+### 11.2 测试策略（45/45 通过，`npm test` = build + `node --test`）
 
-- **单元**：Orchestrator 状态机（返工/超限/只读上下文不可变）、TokenBudgetTracker、UTF-8 字节截断、路径与 symlink 安全、Git hooks 策略、测试命令策略、CLI 校验，以及报告投影、体积上限、脱敏、XSS 转义与零外链。
+- **单元**：既有编排、安全与报告测试；新增配置分层、三态规则、审批审计、容器参数/运行时检测、报告安全投影。
 - **Golden**：`tests/golden/event-schema.snapshot.json` 锁定事件契约，防 Schema 漂移。
-- **E2E**：`tests/e2e/full-workflow.test.ts` 真实执行 `node --test`、创建真实 Git commit，并对两套相同仓库输入的 `workflowSignature` 与门禁判定做一致性断言；`tests/e2e/report.test.ts` 通过 CLI 为成功/失败 Run 生成报告。
+- **E2E**：既有真实测试/commit/可复现性；新增完整 Run 的 COMMIT 审批拒绝路径和报告 CLI 安全面板。
 - **质量门禁**：`npm run check` 串行执行 TypeScript 严格检查、类型感知 ESLint、Prettier 检查与测试；`.github/workflows/ci.yml` 在 push / pull request 中运行同一门禁。
 
 ---
@@ -285,21 +304,24 @@ PRD §7 将"安全与可审计"列为长期底线，但沙箱/审批属 Phase 3�
 
 **v0.3 已解决决策**：`stage.failed.kind` 向后兼容落盘；审计函数提升为 executor/report 共享模块；新增纯函数报告管线、离线单文件渲染和 2,000 条时间线边界。
 
+**v0.4 已解决决策**：三态策略与审批网关进入统一 Tool 执行链；测试命令容器化且资源受限；本机降级显式且可审计；报告新增安全面板。
+
 ## 13. 演进路线（对齐 PRD §7）
 
-| 阶段             | 架构动作                                   | 接缝                                                                 |
-| ---------------- | ------------------------------------------ | -------------------------------------------------------------------- |
-| Phase 2 可观测   | ✅ 静态离线报告；实时事件订阅待后续        | 纯投影已就绪；实时能力可复用 EventLog                                |
-| Phase 3 生产级   | 沙箱执行、审批网关、并发任务、真实仓库接入 | `ToolPolicy`→沙箱；阶段表→可配置流水线；`EventLog` 单文件→可寻址存储 |
-| Phase 4 长期记忆 | 向量库 + 语义检索                          | `MemoryProvider` 替换 Noop                                           |
+| 阶段             | 架构动作                            | 接缝                                                 |
+| ---------------- | ----------------------------------- | ---------------------------------------------------- |
+| Phase 2 可观测   | ✅ 静态离线报告；实时事件订阅待后续 | 纯投影已就绪；实时能力可复用 EventLog                |
+| Phase 3 生产级   | ✅ 沙箱与审批；并发任务待后续       | `ProcessRunner`/`ApprovalGateway` 可继续扩展远程实现 |
+| Phase 4 长期记忆 | 向量库 + 语义检索                   | `MemoryProvider` 替换 Noop                           |
 
 **明确不做（防过度设计）**：不引入 MQ、DB、图/事件引擎、Agent 自由对话拓扑。单进程、顺序执行、JSONL 落盘支撑演示闭环，且迁移路径清晰。
 
 ---
 
-## 14. 与 PRD v0.3 的对应关系
+## 14. 与 PRD v0.4 的对应关系
 
 - DoD 前四项（全流程 / 审查真实输出 / 测试真实通过 / 有效 commit）：已由 e2e 验证 ✅。
 - DoD 第五项（可复现）：`workflowSignature` 双 Run 一致性 + 相同门禁判定已由 e2e 验证 ✅；`temperature=0 + seed=42` 尽力稳定模型输出，非比特级承诺。
 - Phase 2 P0（时间线 / 门禁 / 失败 / 统计 / 离线报告）：纯函数投影 + CLI 成功/失败 e2e 已验证 ✅。
-- 非目标（实时视图 / 长期记忆 / 并发）：架构接缝已留，本轮不实现。
+- Phase 3 P0/P1（策略 / 审批 / 沙箱 / 资源限制 / 安全报告 / CLI 交互）：45 项测试验证 ✅。
+- 非目标（长期记忆 / 并发 / 云托管）：架构接缝已留，本轮不实现。

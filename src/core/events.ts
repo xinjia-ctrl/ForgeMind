@@ -27,6 +27,33 @@ export interface EventDataMap {
     readonly result: unknown;
     readonly policy: string;
   };
+  readonly "approval.requested": {
+    readonly runId: string;
+    readonly stage: StageId;
+    readonly tool: string;
+    readonly action: unknown;
+    readonly policy: string;
+    readonly mode: "approve";
+  };
+  readonly "approval.approved": {
+    readonly runId: string;
+    readonly stage: StageId;
+    readonly tool: string;
+    readonly action: unknown;
+    readonly policy: string;
+    readonly mode: "approve";
+    readonly decisionSource: "interactive" | "auto" | "config";
+  };
+  readonly "approval.rejected": {
+    readonly runId: string;
+    readonly stage: StageId;
+    readonly tool: string;
+    readonly action: unknown;
+    readonly policy: string;
+    readonly mode: "approve" | "deny";
+    readonly reason: string;
+    readonly decisionSource: "interactive" | "auto" | "disabled" | "policy";
+  };
   readonly "artifact.produced": {
     readonly runId: string;
     readonly stage: StageId;

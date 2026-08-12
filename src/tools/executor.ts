@@ -1,5 +1,7 @@
 import type { EventLog } from "../core/event-log.js";
 import type { StageId } from "../core/types.js";
+import type { ApprovalGateway } from "../policy/gateway.js";
+import type { ActionRequest, PolicyResolver } from "../policy/types.js";
 import { auditValue } from "./audit.js";
 import type { Tool, ToolPolicy, ToolResult } from "./types.js";
 
@@ -26,6 +28,8 @@ interface ScopedExecutorOptions {
   readonly stage: StageId;
   readonly agentTools: readonly string[];
   readonly policy: ToolPolicy;
+  readonly policyResolver: PolicyResolver;
+  readonly approvalGateway: ApprovalGateway;
 }
 
 export class ScopedToolExecutor {
@@ -37,6 +41,7 @@ export class ScopedToolExecutor {
 
   public async execute(name: string, args: unknown): Promise<ToolResult> {
     let result: ToolResult;
+    let actionPolicy = "stage-policy";
     const tool = this.#options.registry.get(name);
     if (tool === undefined) {
       result = { ok: false, error: `Unknown tool: ${name}` };
@@ -49,6 +54,15 @@ export class ScopedToolExecutor {
         error: `Tool ${name} is not allowed during ${this.#options.stage}`,
       };
     } else {
+      const action = actionRequest(this.#options.stage, name, args);
+      const decision = this.#options.policyResolver.resolve(action);
+      actionPolicy = decision.policy;
+      const allowed = await this.authorize(action, decision.mode, decision.policy);
+      if (!allowed) {
+        result = { ok: false, error: `Policy denied ${this.#options.stage}/${name}` };
+        await this.recordToolCall(name, args, result, decision.policy);
+        return result;
+      }
       try {
         result = await tool.execute(args, this.#options.policy);
       } catch (error) {
@@ -59,6 +73,72 @@ export class ScopedToolExecutor {
       }
     }
 
+    await this.recordToolCall(name, args, result, actionPolicy);
+    return result;
+  }
+
+  private async authorize(
+    action: ActionRequest,
+    mode: "allow" | "approve" | "deny",
+    policy: string,
+  ): Promise<boolean> {
+    const common = {
+      runId: this.#options.runId,
+      stage: this.#options.stage,
+      tool: action.tool,
+      action: auditValue({ args: action.args, command: action.command }),
+      policy,
+    };
+    if (mode === "allow") return true;
+    if (mode === "deny") {
+      await this.#options.eventLog.append({
+        type: "approval.rejected",
+        data: {
+          ...common,
+          mode,
+          reason: "Action denied by policy",
+          decisionSource: "policy",
+        },
+      });
+      return false;
+    }
+    await this.#options.eventLog.append({
+      type: "approval.requested",
+      data: { ...common, mode },
+    });
+    const approval = await this.#options.approvalGateway.request(action);
+    if (approval === "APPROVED") {
+      await this.#options.eventLog.append({
+        type: "approval.approved",
+        data: {
+          ...common,
+          mode,
+          decisionSource:
+            this.#options.approvalGateway.source === "disabled"
+              ? "config"
+              : this.#options.approvalGateway.source,
+        },
+      });
+      return true;
+    }
+    await this.#options.eventLog.append({
+      type: "approval.rejected",
+      data: {
+        ...common,
+        mode,
+        reason: "Approval denied",
+        decisionSource: this.#options.approvalGateway.source,
+      },
+    });
+    return false;
+  }
+
+  private async recordToolCall(
+    name: string,
+    args: unknown,
+    result: ToolResult,
+    policy: string,
+  ): Promise<void> {
     await this.#options.eventLog.append({
       type: "tool.called",
       data: {
@@ -67,9 +147,27 @@ export class ScopedToolExecutor {
         tool: name,
         args: auditValue(args),
         result: auditValue(result),
-        policy: this.#options.policy.describe(),
+        policy: `${this.#options.policy.describe()}:${policy}`,
       },
     });
-    return result;
   }
+}
+
+function actionRequest(stage: StageId, tool: string, args: unknown): ActionRequest {
+  const command = tool === "run_command" ? commandFromArgs(args) : undefined;
+  return { stage, tool, args, ...(command === undefined ? {} : { command }) };
+}
+
+function commandFromArgs(args: unknown): readonly string[] | undefined {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
+  const command = "command" in args ? args.command : undefined;
+  const commandArgs = "args" in args ? args.args : undefined;
+  if (
+    typeof command !== "string" ||
+    !Array.isArray(commandArgs) ||
+    !commandArgs.every((item) => typeof item === "string")
+  ) {
+    return undefined;
+  }
+  return [command, ...commandArgs];
 }

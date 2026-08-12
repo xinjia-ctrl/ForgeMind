@@ -58,6 +58,19 @@ export interface ReportArtifact {
   readonly summary: string;
 }
 
+export interface ReportSecurityEvent {
+  readonly seq: number;
+  readonly ts: string;
+  readonly stage: StageId;
+  readonly action: string;
+  readonly mode: "allow" | "approve" | "deny";
+  readonly decision: "ALLOWED" | "REQUESTED" | "APPROVED" | "DENIED";
+  readonly policy: string;
+  readonly source?: string;
+  readonly reason?: string;
+  readonly details?: unknown;
+}
+
 export interface ReportViewModel {
   readonly runId: string;
   readonly status: RunStatus | "RUNNING";
@@ -75,6 +88,7 @@ export interface ReportViewModel {
     readonly perStage: readonly ReportStageStats[];
   };
   readonly artifacts: readonly ReportArtifact[];
+  readonly security: readonly ReportSecurityEvent[];
   readonly workflowSignature: string;
   readonly totalEvents: number;
   readonly displayedEvents: number;
@@ -101,6 +115,7 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
   const openStarts = new Map<StageId, number | null>();
   const gates: ReportGate[] = [];
   const artifacts: ReportArtifact[] = [];
+  const security: ReportSecurityEvent[] = [];
   const timeline: ReportTimelineEvent[] = [];
   let runId = "unknown";
   let requirement = "";
@@ -138,6 +153,57 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
       }
       case "tool.called":
         requiredStats(stageStats, event.data.stage).toolCalls += 1;
+        if (policyMode(event.data.policy) === "allow") {
+          security.push({
+            seq: event.seq,
+            ts: event.ts,
+            stage: event.data.stage,
+            action: event.data.tool,
+            mode: "allow",
+            decision: "ALLOWED",
+            policy: event.data.policy,
+            details: auditValue({ args: event.data.args, result: event.data.result }),
+          });
+        }
+        break;
+      case "approval.requested":
+        security.push({
+          seq: event.seq,
+          ts: event.ts,
+          stage: event.data.stage,
+          action: event.data.tool,
+          mode: event.data.mode,
+          decision: "REQUESTED",
+          policy: event.data.policy,
+          details: auditValue(event.data.action),
+        });
+        break;
+      case "approval.approved":
+        security.push({
+          seq: event.seq,
+          ts: event.ts,
+          stage: event.data.stage,
+          action: event.data.tool,
+          mode: event.data.mode,
+          decision: "APPROVED",
+          policy: event.data.policy,
+          source: event.data.decisionSource,
+          details: auditValue(event.data.action),
+        });
+        break;
+      case "approval.rejected":
+        security.push({
+          seq: event.seq,
+          ts: event.ts,
+          stage: event.data.stage,
+          action: event.data.tool,
+          mode: event.data.mode,
+          decision: "DENIED",
+          policy: event.data.policy,
+          source: event.data.decisionSource,
+          reason: event.data.reason,
+          details: auditValue(event.data.action),
+        });
         break;
       case "artifact.produced":
         artifacts.push({
@@ -233,6 +299,7 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
       perStage,
     },
     artifacts,
+    security,
     workflowSignature: workflowSignature(ordered),
     totalEvents: timeline.length,
     displayedEvents: limited.length,
@@ -328,6 +395,9 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "stage.started":
     case "llm.called":
     case "tool.called":
+    case "approval.requested":
+    case "approval.approved":
+    case "approval.rejected":
     case "artifact.produced":
     case "gate.rejected":
     case "gate.passed":
@@ -368,6 +438,13 @@ function eventDetails(event: ForgeMindEvent): unknown {
       policy: event.data.policy,
     };
   }
+  if (
+    event.type === "approval.requested" ||
+    event.type === "approval.approved" ||
+    event.type === "approval.rejected"
+  ) {
+    return { action: auditValue(event.data.action), policy: event.data.policy };
+  }
   if (event.type === "stage.failed" && event.data.stack !== undefined) {
     return { stack: event.data.stack };
   }
@@ -384,6 +461,12 @@ function eventSummary(event: ForgeMindEvent): string {
       return `${event.data.model}: ${event.data.inputTokens} input / ${event.data.outputTokens} output tokens`;
     case "tool.called":
       return `${event.data.tool}: ${toolSucceeded(event.data.result) ? "passed" : "failed"}`;
+    case "approval.requested":
+      return `Approval requested: ${event.data.tool}`;
+    case "approval.approved":
+      return `Approved by ${event.data.decisionSource}: ${event.data.tool}`;
+    case "approval.rejected":
+      return `Denied: ${event.data.tool} — ${event.data.reason}`;
     case "artifact.produced":
       return `${event.data.kind}: ${event.data.path}`;
     case "gate.rejected":
@@ -429,8 +512,18 @@ function isCritical(event: ReportTimelineEvent): boolean {
     event.type === "run.started" ||
     event.type === "run.finished" ||
     event.type === "stage.failed" ||
+    event.type === "approval.requested" ||
+    event.type === "approval.approved" ||
+    event.type === "approval.rejected" ||
     event.type === "gate.rejected" ||
     event.type === "gate.passed" ||
     (event.type === "tool.called" && event.outcome === "failed")
   );
+}
+
+function policyMode(policy: string): "allow" | "approve" | "deny" | null {
+  const match = /(?:rule:\d+|default):(allow|approve|deny)(?:$|:)/.exec(policy);
+  return match?.[1] === "allow" || match?.[1] === "approve" || match?.[1] === "deny"
+    ? match[1]
+    : null;
 }
