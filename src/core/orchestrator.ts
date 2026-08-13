@@ -70,6 +70,7 @@ export class Orchestrator {
           throw new FatalFailure("REVIEW returned wrong output kind");
         }
         ctx = withGate(ctx, reviewOutput.gate);
+        await this.#memory.rememberGate?.(ctx, reviewOutput.gate);
         if (!reviewOutput.gate.passed) {
           if (attempt > this.#maxRework) {
             return await this.finish(
@@ -78,7 +79,7 @@ export class Orchestrator {
               `Review gate remained rejected after ${attempt} attempts`,
             );
           }
-          feedback = reviewOutput.gate.feedback;
+          feedback = reworkEvidence(reviewOutput.gate);
           continue;
         }
 
@@ -88,6 +89,7 @@ export class Orchestrator {
           throw new FatalFailure("TEST returned wrong output kind");
         }
         ctx = withGate(ctx, testOutput.gate);
+        await this.#memory.rememberGate?.(ctx, testOutput.gate);
         if (!testOutput.gate.passed) {
           if (attempt > this.#maxRework) {
             return await this.finish(
@@ -96,7 +98,7 @@ export class Orchestrator {
               `Test gate remained rejected after ${attempt} attempts`,
             );
           }
-          feedback = testOutput.gate.feedback;
+          feedback = reworkEvidence(testOutput.gate);
           continue;
         }
 
@@ -132,4 +134,17 @@ export class Orchestrator {
     });
     return { status, context: ctx, summary };
   }
+}
+
+function reworkEvidence(gate: {
+  readonly stage: "REVIEW" | "TEST";
+  readonly reason: string;
+  readonly feedback: string;
+  readonly evidence: string;
+}): string {
+  return [
+    `${gate.stage} reason: ${gate.reason}`,
+    `Required rework: ${gate.feedback}`,
+    `Previous evidence: ${gate.evidence}`,
+  ].join("\n");
 }

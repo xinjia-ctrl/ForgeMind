@@ -56,6 +56,12 @@ function describe(event: ForgeMindEvent): string {
       return `Attempt ${event.data.attempt} started`;
     case "llm.called":
       return `${event.data.model}: ${event.data.inputTokens} input / ${event.data.outputTokens} output tokens`;
+    case "memory.recalled":
+      return `${event.data.used ? "Used" : "Skipped"} ${event.data.scope} memory from ${event.data.source}`;
+    case "memory.stored":
+      return `Stored ${event.data.scope} ${event.data.kind}: ${event.data.path}`;
+    case "context.assembled":
+      return `Assembled ${event.data.sections.length} context sections (${event.data.tokenEstimate} estimated tokens)`;
     case "tool.called":
       return `${event.data.tool}: ${toolSucceeded(event.data.result) ? "ok" : "failed"}`;
     case "approval.requested":

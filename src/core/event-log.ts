@@ -8,6 +8,7 @@ const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 export class EventLog {
   readonly #filePath: string;
   #nextSeq = 1;
+  #appendQueue: Promise<void> = Promise.resolve();
 
   private constructor(filePath: string) {
     this.#filePath = filePath;
@@ -38,6 +39,15 @@ export class EventLog {
   }
 
   public async append(input: EventInput): Promise<ForgeMindEvent> {
+    const operation = this.#appendQueue.then(() => this.appendImmediately(input));
+    this.#appendQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
+  }
+
+  private async appendImmediately(input: EventInput): Promise<ForgeMindEvent> {
     const event = {
       v: 1,
       seq: this.#nextSeq,
@@ -62,6 +72,7 @@ export class EventLog {
   }
 
   public async load(): Promise<readonly ForgeMindEvent[]> {
+    await this.#appendQueue;
     let content: string;
     try {
       content = await readFile(this.#filePath, "utf8");

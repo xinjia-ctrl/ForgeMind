@@ -43,10 +43,23 @@ it("runs requirement through real tests and creates a Git commit", async () => {
     assert.match(await readFile(path.join(repo, "src/math.js"), "utf8"), /left \+ right/);
 
     const log = EventLog.open(path.dirname(execution.eventLogPath), "e2e-run");
-    const timeline = replay(await log.load());
+    const events = await log.load();
+    const timeline = replay(events);
     assert.equal(timeline.status, "SUCCEEDED");
     assert.ok(timeline.entries.some((entry) => entry.type === "gate.passed"));
     assert.ok(timeline.entries.some((entry) => entry.type === "tool.called"));
+    assert.equal(
+      events.some((event) => event.type.startsWith("memory.")),
+      false,
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "llm.called" &&
+          event.data.promptVersion === "plan.v1" &&
+          event.data.structuredOutput === true,
+      ),
+    );
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -154,6 +167,70 @@ it("fails a complete run when the commit approval is rejected and audits the dec
     assert.ok(testExecution);
     assert.match(JSON.stringify(testExecution.data.result), /container/);
     assert.match(JSON.stringify(testExecution.data.result), /node@sha256/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+it("injects memory from the first run into PLAN and ARCH on the second run", async () => {
+  const repo = await createDemoRepository();
+  try {
+    const first = await runForgeMind({
+      repoPath: repo,
+      requirement: "Add an integer addition function with tests",
+      provider: createDemoProvider(),
+      model: "fake-model",
+      runId: "memory-first-run",
+      approveAll: true,
+      memory: true,
+      processRunner: createSandboxRunner(),
+    });
+    const secondProvider = createDemoProvider();
+    const second = await runForgeMind({
+      repoPath: repo,
+      requirement: "Add an integer addition function with tests",
+      provider: secondProvider,
+      model: "fake-model",
+      runId: "memory-second-run",
+      approveAll: true,
+      memory: true,
+      processRunner: createSandboxRunner(),
+    });
+
+    assert.equal(second.result.status, "SUCCEEDED");
+    const planPrompt = secondProvider.calls[0]?.messages.find((message) => message.role === "user");
+    const archPrompt = secondProvider.calls[1]?.messages.find((message) => message.role === "user");
+    assert.match(planPrompt?.content ?? "", /Historical run memory-first-run/);
+    assert.match(archPrompt?.content ?? "", /Historical run memory-first-run/);
+    const firstEvents = await EventLog.open(
+      path.dirname(first.eventLogPath),
+      "memory-first-run",
+    ).load();
+    assert.ok(firstEvents.some((event) => event.type === "memory.stored"));
+    const events = await EventLog.open(
+      path.dirname(second.eventLogPath),
+      "memory-second-run",
+    ).load();
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "memory.recalled" &&
+          event.data.stage === "PLAN" &&
+          event.data.scope === "episodic",
+      ),
+    );
+    assert.ok(
+      events.some((event) => event.type === "memory.recalled" && event.data.scope === "project"),
+    );
+    assert.equal(
+      events.some((event) => event.type === "memory.stored"),
+      false,
+    );
+    assert.equal(
+      await git(repo, ["ls-files", ".forgemind/memory"]).then((result) => result.stdout.trim()),
+      "",
+    );
+    assert.equal(await git(repo, ["status", "--short"]).then((result) => result.stdout.trim()), "");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

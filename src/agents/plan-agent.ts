@@ -11,16 +11,9 @@ export class PlanAgent extends BaseAgent {
   }
 
   protected async execute(_input: StageInput, ctx: TaskContext): Promise<StageOutput> {
-    const response = await this.completeJson(
-      ctx,
-      [
-        "You are ForgeMind's planning agent.",
-        "Turn one software requirement into a small, executable plan.",
-        "Return JSON only with objective, steps[{id,title,description}], acceptanceCriteria[], summary.",
-        "Do not propose work outside the stated requirement.",
-      ].join(" "),
-      `Requirement:\n${ctx.requirement}`,
-    );
+    const response = await this.completeJson(ctx, [
+      { name: "Requirement", content: ctx.requirement, source: "contract" },
+    ]);
     const plan: TaskPlan = {
       objective: requiredString(response, "objective"),
       steps: objectArray(response, "steps").map((step) => ({

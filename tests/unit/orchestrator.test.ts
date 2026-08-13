@@ -44,7 +44,8 @@ describe("Orchestrator", () => {
         ["TEST", true],
       ],
     );
-    assert.equal(fixture.factory.feedbackSeen, "Fix the defect");
+    assert.match(fixture.factory.feedbackSeen ?? "", /Required rework: Fix the defect/);
+    assert.match(fixture.factory.feedbackSeen ?? "", /Previous evidence:/);
     assert.deepEqual(result.context.meta.attempt, { stage: "COMMIT", count: 1 });
   });
 
@@ -79,7 +80,8 @@ describe("Orchestrator", () => {
     ]);
     const result = await fixture.orchestrator.run(fixture.context);
     assert.equal(result.status, "SUCCEEDED");
-    assert.equal(fixture.factory.feedbackSeen, "Fix tests");
+    assert.match(fixture.factory.feedbackSeen ?? "", /Required rework: Fix tests/);
+    assert.match(fixture.factory.feedbackSeen ?? "", /Previous evidence:/);
     assert.deepEqual(
       result.context.gates.map((gate) => [gate.stage, gate.passed]),
       [

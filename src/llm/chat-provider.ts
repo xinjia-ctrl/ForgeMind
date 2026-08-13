@@ -10,6 +10,10 @@ export interface ChatOptions {
   readonly temperature: number;
   readonly maxOutputTokens: number;
   readonly seed?: number;
+  readonly structuredOutput?: {
+    readonly name: string;
+    readonly jsonSchema: Readonly<Record<string, unknown>>;
+  };
 }
 
 export interface ChatUsage {
@@ -23,5 +27,6 @@ export interface ChatCompletion {
 }
 
 export interface ChatProvider {
+  readonly supportsStructuredOutput?: boolean;
   complete(messages: readonly ChatMessage[], options: ChatOptions): Promise<ChatCompletion>;
 }

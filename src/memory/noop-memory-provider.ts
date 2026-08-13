@@ -3,7 +3,7 @@ import type { MemoryProvider, Retrieval } from "./memory-provider.js";
 
 export class NoopMemoryProvider implements MemoryProvider {
   public remember(_ctx: TaskContext, _artifact: ArtifactRef): Promise<void> {
-    // MVP intentionally has no cross-run memory.
+    // Memory remains an explicit opt-in enhancement.
     return Promise.resolve();
   }
 

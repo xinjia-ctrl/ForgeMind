@@ -12,7 +12,12 @@ import type {
   TaskContext,
   TokenBudget,
 } from "../core/types.js";
+import { assemblePromptInput, type ContextSection } from "../context/assembler.js";
 import type { ChatCompletion, ChatMessage, ChatProvider } from "../llm/chat-provider.js";
+import { supportsStructuredOutput } from "../llm/capabilities.js";
+import type { MemoryProvider, Retrieval } from "../memory/memory-provider.js";
+import { loadPrompt, structuredOutputFor } from "../prompts/index.js";
+import { auditValue } from "../tools/audit.js";
 import type { ScopedToolExecutor } from "../tools/executor.js";
 import type { ToolResult } from "../tools/types.js";
 
@@ -24,6 +29,7 @@ export interface BaseAgentOptions {
   readonly eventLog: EventLog;
   readonly toolExecutor: ScopedToolExecutor;
   readonly budget: TokenBudget;
+  readonly memory: MemoryProvider;
 }
 
 export abstract class BaseAgent implements StageAgent {
@@ -34,6 +40,8 @@ export abstract class BaseAgent implements StageAgent {
   readonly #model: string;
   readonly #eventLog: EventLog;
   readonly #budget: TokenBudget;
+  readonly #memory: MemoryProvider;
+  #retrievals: readonly Retrieval[] = [];
   #lifecycle: AgentLifecycle = "CREATED";
 
   protected constructor(options: BaseAgentOptions) {
@@ -44,6 +52,7 @@ export abstract class BaseAgent implements StageAgent {
     this.#eventLog = options.eventLog;
     this.toolExecutor = options.toolExecutor;
     this.#budget = options.budget;
+    this.#memory = options.memory;
   }
 
   public get lifecycle(): AgentLifecycle {
@@ -60,6 +69,7 @@ export abstract class BaseAgent implements StageAgent {
       data: { runId: ctx.runId, stage: this.id, attempt: input.attempt },
     });
     try {
+      this.#retrievals = await this.recallMemory(ctx);
       const result = await this.execute(input, ctx);
       await this.recordOutput(ctx, result);
       await this.#eventLog.append({
@@ -88,32 +98,57 @@ export abstract class BaseAgent implements StageAgent {
 
   protected async completeJson(
     ctx: TaskContext,
-    system: string,
-    user: string,
+    sections: readonly ContextSection[],
+    promptVariables: Readonly<Record<string, string>> = {},
   ): Promise<Record<string, unknown>> {
+    const prompt = await loadPrompt(this.id, promptVariables);
+    const memorySections = this.#retrievals.map((retrieval): ContextSection => ({
+      name: `${retrieval.scope} memory`,
+      content: retrieval.content,
+      source: "memory",
+      references: [retrieval.source],
+    }));
+    const promptInput = assemblePromptInput([...sections, ...memorySections]);
+    await this.recordContext(ctx, promptInput.sections, promptInput.tokenEstimate);
     const messages: readonly ChatMessage[] = [
-      { role: "system", content: system },
-      { role: "user", content: user },
+      { role: "system", content: prompt.content },
+      { role: "user", content: promptInput.content },
     ];
     const tracker = new TokenBudgetTracker(this.#budget);
     const estimatedInput = estimateTokens(messages.map((item) => item.content).join("\n"));
     tracker.ensureInputFits(estimatedInput);
     const promptFingerprint = createHash("sha256").update(JSON.stringify(messages)).digest("hex");
     let completion: ChatCompletion;
+    const structured = supportsStructuredOutput(this.#provider);
     try {
       completion = await this.#provider.complete(messages, {
         model: this.#model,
         temperature: 0,
         maxOutputTokens: this.#budget.output,
         seed: 42,
+        ...(structured ? { structuredOutput: structuredOutputFor(this.id) } : {}),
       });
     } catch (error) {
-      await this.recordLlmCall(ctx, estimatedInput, 0, promptFingerprint);
+      await this.recordLlmCall(
+        ctx,
+        estimatedInput,
+        0,
+        promptFingerprint,
+        prompt.version,
+        structured,
+      );
       throw error;
     }
     const inputTokens = completion.usage.inputTokens || estimatedInput;
     const outputTokens = completion.usage.outputTokens || estimateTokens(completion.content);
-    await this.recordLlmCall(ctx, inputTokens, outputTokens, promptFingerprint);
+    await this.recordLlmCall(
+      ctx,
+      inputTokens,
+      outputTokens,
+      promptFingerprint,
+      prompt.version,
+      structured,
+    );
     tracker.consumeInput(inputTokens);
     tracker.consumeOutput(outputTokens);
     return parseJsonObject(completion.content);
@@ -124,6 +159,8 @@ export abstract class BaseAgent implements StageAgent {
     inputTokens: number,
     outputTokens: number,
     promptFingerprint: string,
+    promptVersion: string,
+    structuredOutput: boolean,
   ): Promise<void> {
     await this.#eventLog.append({
       type: "llm.called",
@@ -134,6 +171,54 @@ export abstract class BaseAgent implements StageAgent {
         inputTokens,
         outputTokens,
         promptFingerprint,
+        promptVersion,
+        structuredOutput,
+      },
+    });
+  }
+
+  private async recallMemory(ctx: TaskContext): Promise<readonly Retrieval[]> {
+    if (this.id !== "PLAN" && this.id !== "ARCH") return [];
+    const query = [ctx.requirement, ctx.plan?.summary ?? ""].join(" ");
+    const retrievals = await this.#memory.recall(query, {
+      scopes: ["episodic", "project", "semantic"],
+      limit: 6,
+    });
+    for (const retrieval of retrievals) {
+      await this.#eventLog.append({
+        type: "memory.recalled",
+        data: {
+          runId: ctx.runId,
+          stage: this.id,
+          scope: retrieval.scope,
+          source: retrieval.source,
+          score: retrieval.score,
+          reason: retrieval.reason,
+          content: auditValue(retrieval.content, "content"),
+          used: true,
+        },
+      });
+    }
+    return retrievals;
+  }
+
+  private async recordContext(
+    ctx: TaskContext,
+    sections: readonly ContextSection[],
+    tokenEstimate: number,
+  ): Promise<void> {
+    await this.#eventLog.append({
+      type: "context.assembled",
+      data: {
+        runId: ctx.runId,
+        stage: this.id,
+        sections: sections.map((section) => ({
+          name: section.name,
+          source: section.source,
+          tokenEstimate: estimateTokens(section.content),
+          references: section.references ?? [],
+        })),
+        tokenEstimate,
       },
     });
   }

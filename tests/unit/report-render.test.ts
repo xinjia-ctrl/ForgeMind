@@ -99,6 +99,52 @@ describe("report HTML rendering", () => {
     });
     assert.doesNotMatch(tamperedHtml, /class="status [^"]*"\s+onmouseover=/i);
   });
+
+  it("renders memory, prompt governance, and context audit panels", () => {
+    const model = buildReportViewModel([
+      event(1, "memory.recalled", {
+        runId: "panel-run",
+        stage: "ARCH",
+        scope: "project",
+        source: ".forgemind/memory/decisions.json",
+        score: 3,
+        reason: "matched router <decision>",
+        content: "<redacted:20 bytes>",
+        used: true,
+      }),
+      event(2, "llm.called", {
+        runId: "panel-run",
+        stage: "ARCH",
+        model: "test-model",
+        inputTokens: 20,
+        outputTokens: 10,
+        promptFingerprint: "fingerprint",
+        promptVersion: "architecture.v1",
+        structuredOutput: true,
+      }),
+      event(3, "context.assembled", {
+        runId: "panel-run",
+        stage: "ARCH",
+        sections: [
+          {
+            name: "project memory",
+            source: "memory",
+            tokenEstimate: 5,
+            references: [".forgemind/memory/decisions.json"],
+          },
+        ],
+        tokenEstimate: 5,
+      }),
+    ]);
+
+    const html = renderReportHtml(model);
+    assert.match(html, /MEMORY TRACE/);
+    assert.match(html, /PROMPT GOVERNANCE/);
+    assert.match(html, /CONTEXT AUDIT/);
+    assert.match(html, /architecture\.v1/);
+    assert.match(html, /matched router &lt;decision&gt;/);
+    assert.doesNotMatch(html, /redacted:20/);
+  });
 });
 
 function event<K extends EventType>(

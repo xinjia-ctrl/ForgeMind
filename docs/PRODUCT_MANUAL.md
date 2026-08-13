@@ -1,6 +1,6 @@
 # ForgeMind 产品使用手册
 
-> 版本：v0.4（对齐已实现代码）
+> 版本：v0.5（对齐已实现代码）
 > 说明：本手册面向使用者，描述**当前代码实际具备**的产品能力，不含规划中未实现的功能。
 
 ---
@@ -20,7 +20,7 @@ ForgeMind 是一个多 Agent 协作的软件研发编排器：输入一条自然
 | 运行环境 | 目标仓库必须干净；测试命令默认在 Docker/Podman 容器沙箱执行               |
 | 模型     | 任意 OpenAI 兼容 Chat Completions 接口（`gpt-4.1-mini` 默认）             |
 | 测试执行 | 真实运行测试命令（自动探测 package test，回退 `node --test`，可显式指定） |
-| 长期记忆 | 无（一次 Run 即独立上下文）                                               |
+| 长期记忆 | 默认关闭；`--memory` 显式启用项目内 L2 情景记忆与 L3 项目记忆             |
 | 可视化   | 任意历史 Run 可生成离线单文件 HTML 报告                                   |
 
 ## 3. 使用前置条件
@@ -92,6 +92,7 @@ forge-mind run --repo <path> --requirement <text> [选项]
 | `--config`         | 项目策略配置文件                      | 无；仍会读取全局/环境/仓库级配置     |
 | `--yes`            | 自动批准命中 `approve` 的动作         | false                                |
 | `--no-approve`     | 拒绝所有需审批动作                    | 非交互环境默认采用                   |
+| `--memory`         | 启用历史 Run 召回和项目记忆读写       | false                                |
 | `--skip-git-hooks` | 显式跳过 Git commit hooks             | false（默认执行 hooks）              |
 
 ### 回放
@@ -116,13 +117,17 @@ forge-mind report --repo <path> --run-id <run-id>
 - 各阶段 LLM token、工具调用数和可对账耗时；
 - 产物列表、审计后的工具详情与流程签名。
 - 安全审计面板：策略模式、审批请求/批准/拒绝、决策来源、时间和脱敏动作。
+- 记忆面板：召回/存储的层、来源、命中依据、分数与是否使用。
+- 提示词版本面板：每个 LLM 阶段实际使用的资源版本及结构化输出状态。
+- 上下文审计面板：注入 section 的来源、引用文件和估算 token 分布。
 
 ## 7. 产物与可观测性
 
 - **工作区产物**：`docs/.forgemind/<run-id>/plan.md`、`architecture.md`
+- **可选项目记忆**：`.forgemind/memory/decisions.json`、`lessons.json`（仅 `--memory`；加入目标仓库的 Git 本地 exclude，不进入生成 commit）
 - **事件日志**：`.git/forgemind/runs/<run-id>.jsonl`（不进入 commit，不污染产出）
 - **可视化报告**：`.git/forgemind/reports/<run-id>.html`（日志的只读投影，不是第二份事实源）
-- **事件类型**：除运行、阶段、LLM、工具、产物和门禁事件外，包含 `approval.requested / approval.approved / approval.rejected` 安全决策事件
+- **事件类型**：除运行、阶段、LLM、工具、产物和门禁事件外，包含 `approval.*`、`memory.recalled / memory.stored` 与 `context.assembled`
 - **门禁判定**：REVIEW 以 diff 指纹（sha256）锚定，防止"审查后工作区又变了"；COMMIT 前强制复核 diff 指纹一致。
 - **流程签名**：`workflowSignature` 忽略时间戳、runId、commit sha 等非确定数据，对事件顺序、阶段、工具结果和门禁结果生成稳定 sha256。
 
@@ -169,20 +174,22 @@ forge-mind report --repo <path> --run-id <run-id>
 
 ## 9. 已知限制与失败场景
 
-| 场景                              | 行为                    |
-| --------------------------------- | ----------------------- |
-| 目标仓库有未提交变更              | 拒绝执行（HardFailure） |
-| 无 LLM API Key                    | 拒绝执行                |
-| LLM 返回非 JSON / 缺字段          | 阶段失败，Run 失败      |
-| REVIEW diff 超限截断              | 直接驳回并提示缩小变更  |
-| TEST 超时（默认 5 分钟）/输出超限 | 视为测试失败            |
-| 返工超限                          | FAILED，保留现场        |
-| 无效 run-id / 重复 run-id         | 拒绝（FatalFailure）    |
-| Git commit hook 失败              | FAILED，保留分支供处理  |
-| 策略配置非法 / 镜像未固定         | 启动时 HardFailure      |
-| Docker/Podman 不可用              | 默认拒绝并给出降级指引  |
-| 审批拒绝 / 非交互环境未显式批准   | 动作不执行，Run FAILED  |
-| 容器 OOM / 超时 / 非零退出        | TEST 门禁失败并保留审计 |
+| 场景                              | 行为                                                         |
+| --------------------------------- | ------------------------------------------------------------ |
+| 目标仓库有未提交变更              | 拒绝执行（HardFailure）                                      |
+| 无 LLM API Key                    | 拒绝执行                                                     |
+| LLM 返回非 JSON / 缺字段          | 阶段失败，Run 失败                                           |
+| REVIEW diff 超限截断              | 直接驳回并提示缩小变更                                       |
+| TEST 超时（默认 5 分钟）/输出超限 | 视为测试失败                                                 |
+| 返工超限                          | FAILED，保留现场                                             |
+| 无效 run-id / 重复 run-id         | 拒绝（FatalFailure）                                         |
+| Git commit hook 失败              | FAILED，保留分支供处理                                       |
+| 策略配置非法 / 镜像未固定         | 启动时 HardFailure                                           |
+| Docker/Podman 不可用              | 默认拒绝并给出降级指引                                       |
+| 审批拒绝 / 非交互环境未显式批准   | 动作不执行，Run FAILED                                       |
+| 容器 OOM / 超时 / 非零退出        | TEST 门禁失败并保留审计                                      |
+| 项目记忆 JSON 损坏                | HardFailure，保留原文件且不覆盖                              |
+| 模型不支持 JSON Schema            | 关闭能力位；本次有内容则按旧 JSON 解析，否则阶段失败；不重试 |
 
 ## 10. 常见问题
 
@@ -200,3 +207,9 @@ forge-mind report --repo <path> --run-id <run-id>
 
 **Q：CI 中如何处理审批？**
 在策略中保持危险动作是 `approve`，再显式传 `--yes`；事件会记录 `decisionSource=auto`。若希望 CI 验证必须拒绝审批，传 `--no-approve`。
+
+**Q：项目记忆会污染 commit 吗？**
+不会。只有显式传 `--memory` 才会写入 `.forgemind/memory/`，运行入口同时把该目录加入目标仓库的 Git 本地 exclude。记忆可查看、删除，但不会被 `git add --all` 纳入 ForgeMind 生成的 commit。
+
+**Q：如何评估提示词改动？**
+运行 `npm run eval`。它用确定性 FakeProvider 对 4 条代表性需求比较旧版与当前提示词的通过率、返工轮次、越权工具调用和估算 token 成本。

@@ -71,6 +71,38 @@ export interface ReportSecurityEvent {
   readonly details?: unknown;
 }
 
+export interface ReportMemoryEvent {
+  readonly seq: number;
+  readonly ts: string;
+  readonly stage: StageId;
+  readonly operation: "RECALLED" | "STORED";
+  readonly scope: "working" | "episodic" | "project" | "semantic";
+  readonly source: string;
+  readonly reason?: string;
+  readonly score?: number;
+  readonly used?: boolean;
+}
+
+export interface ReportPromptVersion {
+  readonly seq: number;
+  readonly stage: StageId;
+  readonly model: string;
+  readonly version: string;
+  readonly structuredOutput: boolean;
+}
+
+export interface ReportContextAssembly {
+  readonly seq: number;
+  readonly stage: StageId;
+  readonly tokenEstimate: number;
+  readonly sections: readonly {
+    readonly name: string;
+    readonly source: string;
+    readonly tokenEstimate: number;
+    readonly references: readonly string[];
+  }[];
+}
+
 export interface ReportViewModel {
   readonly runId: string;
   readonly status: RunStatus | "RUNNING";
@@ -89,6 +121,9 @@ export interface ReportViewModel {
   };
   readonly artifacts: readonly ReportArtifact[];
   readonly security: readonly ReportSecurityEvent[];
+  readonly memory: readonly ReportMemoryEvent[];
+  readonly prompts: readonly ReportPromptVersion[];
+  readonly contexts: readonly ReportContextAssembly[];
   readonly workflowSignature: string;
   readonly totalEvents: number;
   readonly displayedEvents: number;
@@ -116,6 +151,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
   const gates: ReportGate[] = [];
   const artifacts: ReportArtifact[] = [];
   const security: ReportSecurityEvent[] = [];
+  const memory: ReportMemoryEvent[] = [];
+  const prompts: ReportPromptVersion[] = [];
+  const contexts: ReportContextAssembly[] = [];
   const timeline: ReportTimelineEvent[] = [];
   let runId = "unknown";
   let requirement = "";
@@ -149,8 +187,46 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
         stats.llmCalls += 1;
         stats.inputTokens += event.data.inputTokens;
         stats.outputTokens += event.data.outputTokens;
+        prompts.push({
+          seq: event.seq,
+          stage: event.data.stage,
+          model: event.data.model,
+          version: event.data.promptVersion ?? "legacy/unversioned",
+          structuredOutput: event.data.structuredOutput ?? false,
+        });
         break;
       }
+      case "memory.recalled":
+        memory.push({
+          seq: event.seq,
+          ts: event.ts,
+          stage: event.data.stage,
+          operation: "RECALLED",
+          scope: event.data.scope,
+          source: event.data.source,
+          reason: event.data.reason,
+          score: event.data.score,
+          used: event.data.used,
+        });
+        break;
+      case "memory.stored":
+        memory.push({
+          seq: event.seq,
+          ts: event.ts,
+          stage: event.data.stage,
+          operation: "STORED",
+          scope: event.data.scope,
+          source: event.data.path,
+        });
+        break;
+      case "context.assembled":
+        contexts.push({
+          seq: event.seq,
+          stage: event.data.stage,
+          tokenEstimate: event.data.tokenEstimate,
+          sections: event.data.sections,
+        });
+        break;
       case "tool.called":
         requiredStats(stageStats, event.data.stage).toolCalls += 1;
         if (policyMode(event.data.policy) === "allow") {
@@ -300,6 +376,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
     },
     artifacts,
     security,
+    memory,
+    prompts,
+    contexts,
     workflowSignature: workflowSignature(ordered),
     totalEvents: timeline.length,
     displayedEvents: limited.length,
@@ -395,6 +474,9 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "stage.started":
     case "llm.called":
     case "tool.called":
+    case "memory.recalled":
+    case "memory.stored":
+    case "context.assembled":
     case "approval.requested":
     case "approval.approved":
     case "approval.rejected":
@@ -445,6 +527,20 @@ function eventDetails(event: ForgeMindEvent): unknown {
   ) {
     return { action: auditValue(event.data.action), policy: event.data.policy };
   }
+  if (event.type === "memory.recalled") {
+    return {
+      scope: event.data.scope,
+      source: event.data.source,
+      score: event.data.score,
+      reason: event.data.reason,
+      used: event.data.used,
+      content: auditValue(event.data.content, "content"),
+    };
+  }
+  if (event.type === "memory.stored") {
+    return { scope: event.data.scope, kind: event.data.kind, path: event.data.path };
+  }
+  if (event.type === "context.assembled") return event.data;
   if (event.type === "stage.failed" && event.data.stack !== undefined) {
     return { stack: event.data.stack };
   }
@@ -459,6 +555,12 @@ function eventSummary(event: ForgeMindEvent): string {
       return `Attempt ${event.data.attempt} started`;
     case "llm.called":
       return `${event.data.model}: ${event.data.inputTokens} input / ${event.data.outputTokens} output tokens`;
+    case "memory.recalled":
+      return `${event.data.used ? "Used" : "Skipped"} ${event.data.scope} memory from ${event.data.source}`;
+    case "memory.stored":
+      return `Stored ${event.data.scope} ${event.data.kind}: ${event.data.path}`;
+    case "context.assembled":
+      return `Assembled ${event.data.sections.length} context sections (${event.data.tokenEstimate} estimated tokens)`;
     case "tool.called":
       return `${event.data.tool}: ${toolSucceeded(event.data.result) ? "passed" : "failed"}`;
     case "approval.requested":

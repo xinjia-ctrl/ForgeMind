@@ -17,18 +17,42 @@
     },
     {
       "seq": 3,
+      "type": "memory.recalled",
+      "stage": "PLAN",
+      "detail": "Used project memory from .forgemind/memory/decisions.json"
+    },
+    {
+      "seq": 4,
+      "type": "context.assembled",
+      "stage": "PLAN",
+      "detail": "Assembled 1 context sections (6 estimated tokens)"
+    },
+    {
+      "seq": 5,
+      "type": "llm.called",
+      "stage": "PLAN",
+      "detail": "test-model: 12 input / 4 output tokens"
+    },
+    {
+      "seq": 6,
+      "type": "memory.stored",
+      "stage": "PLAN",
+      "detail": "Stored project decision: .forgemind/memory/decisions.json"
+    },
+    {
+      "seq": 7,
       "type": "approval.rejected",
       "stage": "PLAN",
       "detail": "Rejected write_file: Action denied by policy"
     },
     {
-      "seq": 4,
+      "seq": 8,
       "type": "stage.failed",
       "stage": "PLAN",
       "detail": "Planning failed"
     },
     {
-      "seq": 5,
+      "seq": 9,
       "type": "run.finished",
       "stage": null,
       "detail": "FAILED: Planning failed"

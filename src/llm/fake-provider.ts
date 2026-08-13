@@ -3,14 +3,19 @@ import { estimateTokens } from "../core/token-budget.js";
 import type { ChatCompletion, ChatMessage, ChatOptions, ChatProvider } from "./chat-provider.js";
 
 export class FakeChatProvider implements ChatProvider {
+  public readonly supportsStructuredOutput: boolean;
   readonly #responses: string[];
   readonly calls: Array<{
     readonly messages: readonly ChatMessage[];
     readonly options: ChatOptions;
   }> = [];
 
-  public constructor(responses: readonly string[]) {
+  public constructor(
+    responses: readonly string[],
+    options: { readonly supportsStructuredOutput?: boolean } = {},
+  ) {
     this.#responses = [...responses];
+    this.supportsStructuredOutput = options.supportsStructuredOutput ?? true;
   }
 
   public complete(messages: readonly ChatMessage[], options: ChatOptions): Promise<ChatCompletion> {

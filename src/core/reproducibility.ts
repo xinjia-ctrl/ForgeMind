@@ -28,6 +28,27 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
             stage: event.data.stage,
             operation: event.data.model,
           };
+        case "memory.recalled":
+          return {
+            type: event.type,
+            stage: event.data.stage,
+            operation: event.data.scope,
+            outcome: event.data.used ? "used" : "skipped",
+          };
+        case "memory.stored":
+          return {
+            type: event.type,
+            stage: event.data.stage,
+            operation: event.data.kind,
+            outcome: "stored",
+          };
+        case "context.assembled":
+          return {
+            type: event.type,
+            stage: event.data.stage,
+            operation: "context",
+            outcome: `${event.data.sections.length}-sections`,
+          };
         case "tool.called":
           return {
             type: event.type,

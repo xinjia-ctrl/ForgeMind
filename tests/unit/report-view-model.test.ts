@@ -181,6 +181,70 @@ describe("report view model", () => {
     assert.doesNotMatch(JSON.stringify(report.security), /PRIVATE/);
   });
 
+  it("projects memory, prompt versions, and source-labelled context without content", () => {
+    const report = buildReportViewModel([
+      event(1, "memory.recalled", {
+        runId: "intelligence-run",
+        stage: "PLAN",
+        scope: "episodic",
+        source: "runs/previous.jsonl",
+        score: 1.25,
+        reason: "requirement overlap: health",
+        content: "<redacted:42 bytes>",
+        used: true,
+      }),
+      event(2, "memory.stored", {
+        runId: "intelligence-run",
+        stage: "ARCH",
+        scope: "project",
+        kind: "decision",
+        path: ".forgemind/memory/decisions.json",
+      }),
+      event(3, "context.assembled", {
+        runId: "intelligence-run",
+        stage: "CODE",
+        sections: [
+          {
+            name: "Bounded workspace context",
+            source: "retrieval",
+            tokenEstimate: 128,
+            references: ["src/router.ts"],
+          },
+        ],
+        tokenEstimate: 128,
+      }),
+      event(4, "llm.called", {
+        runId: "intelligence-run",
+        stage: "CODE",
+        model: "test-model",
+        inputTokens: 128,
+        outputTokens: 32,
+        promptFingerprint: "fingerprint",
+        promptVersion: "code.v1",
+        structuredOutput: true,
+      }),
+    ]);
+
+    assert.deepEqual(
+      report.memory.map((item) => [item.operation, item.scope, item.source, item.used]),
+      [
+        ["RECALLED", "episodic", "runs/previous.jsonl", true],
+        ["STORED", "project", ".forgemind/memory/decisions.json", undefined],
+      ],
+    );
+    assert.deepEqual(report.prompts, [
+      {
+        seq: 4,
+        stage: "CODE",
+        model: "test-model",
+        version: "code.v1",
+        structuredOutput: true,
+      },
+    ]);
+    assert.equal(report.contexts[0]?.sections[0]?.references[0], "src/router.ts");
+    assert.doesNotMatch(JSON.stringify(report), /redacted:42/);
+  });
+
   it("keeps historical failures honest and handles an empty log", () => {
     const historical = buildReportViewModel([
       event(1, "stage.failed", {

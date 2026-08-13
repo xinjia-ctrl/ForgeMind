@@ -23,6 +23,58 @@ it("keeps the versioned event and replay contract stable", async () => {
       data: { runId: "golden-run", stage: "PLAN", attempt: 1 },
     });
     await log.append({
+      type: "memory.recalled",
+      data: {
+        runId: "golden-run",
+        stage: "PLAN",
+        scope: "project",
+        source: ".forgemind/memory/decisions.json",
+        score: 2.5,
+        reason: "tag/content overlap: deterministic",
+        content: "<redacted:23 bytes>",
+        used: true,
+      },
+    });
+    await log.append({
+      type: "context.assembled",
+      data: {
+        runId: "golden-run",
+        stage: "PLAN",
+        sections: [
+          {
+            name: "Requirement",
+            source: "contract",
+            tokenEstimate: 6,
+            references: [],
+          },
+        ],
+        tokenEstimate: 6,
+      },
+    });
+    await log.append({
+      type: "llm.called",
+      data: {
+        runId: "golden-run",
+        stage: "PLAN",
+        model: "test-model",
+        inputTokens: 12,
+        outputTokens: 4,
+        promptFingerprint: "sha256",
+        promptVersion: "plan.v1",
+        structuredOutput: true,
+      },
+    });
+    await log.append({
+      type: "memory.stored",
+      data: {
+        runId: "golden-run",
+        stage: "PLAN",
+        scope: "project",
+        kind: "decision",
+        path: ".forgemind/memory/decisions.json",
+      },
+    });
+    await log.append({
       type: "approval.rejected",
       data: {
         runId: "golden-run",
@@ -55,7 +107,7 @@ it("keeps the versioned event and replay contract stable", async () => {
     const rawEvents = await log.load();
     assert.deepEqual(
       rawEvents.map((event) => event.seq),
-      [1, 2, 3, 4, 5],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_TOKEN_BUDGETS } from "../config/budgets.js";
 import { loadPolicyConfig, type ForgeMindPolicyConfig } from "../config/policy.js";
@@ -8,7 +9,11 @@ import { assertValidRunId, EventLog } from "../core/event-log.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import type { RunResult } from "../core/types.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
+import { EpisodicMemory } from "../memory/episodic-memory.js";
+import { LayeredMemory } from "../memory/layered-memory.js";
+import type { MemoryProvider } from "../memory/memory-provider.js";
 import { NoopMemoryProvider } from "../memory/noop-memory-provider.js";
+import { ProjectMemory } from "../memory/project-memory.js";
 import { AutoApprovalGateway } from "../policy/auto-gateway.js";
 import { DenyApprovalGateway, type ApprovalGateway } from "../policy/gateway.js";
 import { InteractiveApprovalGateway } from "../policy/interactive-gateway.js";
@@ -34,6 +39,8 @@ export interface RunOptions {
   readonly policyConfig?: ForgeMindPolicyConfig;
   readonly processRunner?: ProcessRunner;
   readonly approvalGateway?: ApprovalGateway;
+  readonly memory?: boolean;
+  readonly memoryProvider?: MemoryProvider;
 }
 
 export interface RunExecution {
@@ -71,9 +78,25 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   const processRunner = options.processRunner ?? (await createProcessRunner(policyConfig.sandbox));
   const approvalGateway = options.approvalGateway ?? approvalGatewayFor(options);
   const policyResolver = new RulePolicyResolver(policyConfig.defaultMode, policyConfig.rules);
+  if (options.memory === true) await excludeProjectMemory(inspected.gitDirectory);
   const workspace = await prepareGitWorkspace(options.repoPath, runId);
   const eventsDirectory = path.join(workspace.gitDirectory, "forgemind", "runs");
   const eventLog = await EventLog.create(eventsDirectory, runId);
+  const memory =
+    options.memoryProvider ??
+    (options.memory === true
+      ? new LayeredMemory({
+          layers: {
+            episodic: new EpisodicMemory({ eventsDirectory, currentRunId: runId }),
+            project: new ProjectMemory({
+              repositoryRoot: workspace.root,
+              writeEnabled: true,
+              eventLog,
+            }),
+            semantic: null,
+          },
+        })
+      : new NoopMemoryProvider());
   const context = createTaskContext({
     runId,
     requirement: options.requirement.trim(),
@@ -93,15 +116,38 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
     skipGitHooks: options.skipGitHooks ?? false,
     policyResolver,
     approvalGateway,
+    memory,
   });
   const orchestrator = new Orchestrator({
     eventLog,
     agentFactory: factory,
-    memory: new NoopMemoryProvider(),
+    memory,
     ...(options.maxRework === undefined ? {} : { maxRework: options.maxRework }),
   });
   const result = await orchestrator.run(context);
   return { result, eventLogPath: eventLog.filePath };
+}
+
+async function excludeProjectMemory(gitDirectory: string): Promise<void> {
+  const infoDirectory = path.join(gitDirectory, "info");
+  const excludePath = path.join(infoDirectory, "exclude");
+  const rule = "/.forgemind/memory/";
+  let content = "";
+  try {
+    content = await readFile(excludePath, "utf8");
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
+  }
+  if (content.split(/\r?\n/).includes(rule)) return;
+  await mkdir(infoDirectory, { recursive: true });
+  await appendFile(
+    excludePath,
+    `${content.length > 0 && !content.endsWith("\n") ? "\n" : ""}${rule}\n`,
+  );
+}
+
+function isMissingFile(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function approvalGatewayFor(options: RunOptions): ApprovalGateway {

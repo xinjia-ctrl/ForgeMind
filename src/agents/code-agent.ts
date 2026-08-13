@@ -1,4 +1,5 @@
 import { StageFailure } from "../core/errors.js";
+import { rankWorkspaceFiles, searchTerms, type GrepMatch } from "../context/assembler.js";
 import { truncateUtf8 } from "../core/text.js";
 import type { ArtifactRef, StageInput, StageOutput, TaskContext } from "../core/types.js";
 import type { ToolResult } from "../tools/types.js";
@@ -32,21 +33,28 @@ export class CodeAgent extends BaseAgent {
     const response = await this.completeJson(
       ctx,
       [
-        "You are ForgeMind's coding agent.",
-        "Produce a complete, minimal implementation and its tests in one bounded operation batch.",
-        "Return JSON only with summary and operations[].",
-        "Each operation is {tool:'write_file',args:{path,content}} or {tool:'edit_file',args:{path,search,replacement,expectedOccurrences}}.",
-        `At most ${MAX_OPERATIONS} operations are allowed. Never edit .git or docs/.forgemind run artifacts.`,
-        "Preserve existing architecture and do not omit tests.",
-      ].join(" "),
-      [
-        `Requirement: ${ctx.requirement}`,
-        `Plan: ${ctx.plan.summary}`,
-        `Architecture: ${ctx.architecture.summary}`,
-        `Expected files: ${ctx.architecture.files.map((file) => file.path).join(", ")}`,
-        `Rework feedback: ${input.feedback ?? "none"}`,
-        `Bounded workspace context:\n${workspaceContext}`,
-      ].join("\n"),
+        { name: "Requirement", content: ctx.requirement, source: "contract" },
+        { name: "Plan", content: ctx.plan.summary, source: "contract" },
+        { name: "Architecture", content: ctx.architecture.summary, source: "contract" },
+        {
+          name: "Expected files",
+          content: ctx.architecture.files.map((file) => file.path).join(", "),
+          source: "contract",
+          references: ctx.architecture.files.map((file) => file.path),
+        },
+        {
+          name: "Rework evidence",
+          content: input.feedback ?? "none",
+          source: "rework",
+        },
+        {
+          name: "Bounded workspace context",
+          content: workspaceContext.content,
+          source: "retrieval",
+          references: workspaceContext.references,
+        },
+      ],
+      { maxOperations: String(MAX_OPERATIONS) },
     );
     const operations = objectArray(response, "operations");
     if (operations.length === 0 || operations.length > MAX_OPERATIONS) {
@@ -82,15 +90,31 @@ export class CodeAgent extends BaseAgent {
     return { kind: "code", summary, artifacts };
   }
 
-  private async collectWorkspaceContext(ctx: TaskContext): Promise<string> {
+  private async collectWorkspaceContext(
+    ctx: TaskContext,
+  ): Promise<{ readonly content: string; readonly references: readonly string[] }> {
     const glob = await this.requireTool("glob", { pattern: "**/*" });
     const files = extractFiles(glob).filter(
       (file) => !file.startsWith("docs/.forgemind/") && isLikelyText(file),
     );
     const preferred = ctx.architecture?.files.map((file) => file.path) ?? [];
-    const selected = [...new Set([...preferred, ...files])]
-      .filter((file) => files.includes(file))
-      .slice(0, MAX_CONTEXT_FILES);
+    const queries = searchTerms(`${ctx.requirement} ${ctx.architecture?.summary ?? ""}`);
+    const grepMatches: GrepMatch[] = [];
+    if (queries.length > 0) {
+      const result = await this.requireTool("grep", {
+        queries,
+        pattern: "**/*",
+        caseSensitive: false,
+      });
+      grepMatches.push(...extractGrepMatches(result));
+    }
+    const selected = rankWorkspaceFiles({
+      files,
+      expectedFiles: preferred,
+      query: `${ctx.requirement} ${ctx.architecture?.summary ?? ""}`,
+      grepMatches,
+      limit: MAX_CONTEXT_FILES,
+    });
     const excerpts: string[] = [
       `Workspace files (${files.length}):\n${files.slice(0, 300).join("\n")}`,
     ];
@@ -103,7 +127,18 @@ export class CodeAgent extends BaseAgent {
       const content = extractReadContent(result);
       excerpts.push(`--- ${file} ---\n${content}`);
     }
-    return truncateUtf8(excerpts.join("\n"), MAX_CONTEXT_BYTES).text;
+    const matchSummary = grepMatches
+      .slice(0, 30)
+      .map((match) => `${match.path}:${match.line}: ${match.text}`)
+      .join("\n");
+    if (matchSummary.length > 0) excerpts.splice(1, 0, `Relevant grep matches:\n${matchSummary}`);
+    return {
+      content: truncateUtf8(excerpts.join("\n"), MAX_CONTEXT_BYTES).text,
+      references: [
+        ...selected,
+        ...new Set(grepMatches.slice(0, 30).map((match) => `${match.path}:${match.line}`)),
+      ],
+    };
   }
 }
 
@@ -118,6 +153,25 @@ function extractReadContent(result: ToolResult): string {
   const data = result.data;
   if (typeof data !== "object" || data === null || !("content" in data)) return "";
   return typeof data.content === "string" ? data.content : "";
+}
+
+function extractGrepMatches(result: ToolResult): GrepMatch[] {
+  const data = result.data;
+  if (!isRecord(data)) return [];
+  const matches: unknown = data["matches"];
+  if (!Array.isArray(matches)) return [];
+  return matches.filter((match: unknown): match is GrepMatch => {
+    if (!isRecord(match)) return false;
+    return (
+      typeof match["path"] === "string" &&
+      typeof match["line"] === "number" &&
+      typeof match["text"] === "string"
+    );
+  });
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isLikelyText(file: string): boolean {

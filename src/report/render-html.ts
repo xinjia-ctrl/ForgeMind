@@ -1,5 +1,8 @@
 import type {
+  ReportContextAssembly,
   ReportGate,
+  ReportMemoryEvent,
+  ReportPromptVersion,
   ReportSecurityEvent,
   ReportStageStats,
   ReportTimelineEvent,
@@ -44,6 +47,18 @@ export function renderReportHtml(model: ReportViewModel): string {
     model.security.length === 0
       ? emptyState("No policy or approval events recorded")
       : model.security.map(renderSecurityEvent).join("");
+  const memory =
+    model.memory.length === 0
+      ? emptyState("No memory was recalled or stored")
+      : model.memory.map(renderMemoryEvent).join("");
+  const prompts =
+    model.prompts.length === 0
+      ? emptyState("No versioned prompt calls recorded")
+      : model.prompts.map(renderPromptVersion).join("");
+  const contexts =
+    model.contexts.length === 0
+      ? emptyState("No context assembly evidence recorded")
+      : model.contexts.map(renderContextAssembly).join("");
   const failure =
     model.failure === undefined
       ? ""
@@ -120,6 +135,22 @@ export function renderReportHtml(model: ReportViewModel): string {
     <section>
       <div class="section-heading"><div><p class="eyebrow">SECURITY AUDIT</p><h2>Policy and approval decisions</h2></div></div>
       <div class="security-list">${security}</div>
+    </section>
+
+    <section>
+      <div class="section-heading"><div><p class="eyebrow">MEMORY TRACE</p><h2>Recalled and stored project knowledge</h2></div></div>
+      <div class="memory-list">${memory}</div>
+    </section>
+
+    <section class="split">
+      <div>
+        <div class="section-heading"><div><p class="eyebrow">PROMPT GOVERNANCE</p><h2>Prompt versions</h2></div></div>
+        <div class="prompt-list">${prompts}</div>
+      </div>
+      <div>
+        <div class="section-heading"><div><p class="eyebrow">CONTEXT AUDIT</p><h2>Injected context</h2></div></div>
+        <div class="context-list">${contexts}</div>
+      </div>
     </section>
 
     <footer>
@@ -217,6 +248,33 @@ function renderSecurityEvent(event: ReportSecurityEvent): string {
   </article>`;
 }
 
+function renderMemoryEvent(event: ReportMemoryEvent): string {
+  const meta = [
+    event.reason,
+    event.score === undefined ? undefined : `score ${event.score.toFixed(2)}`,
+    event.used === undefined ? undefined : event.used ? "used" : "skipped",
+  ].filter((value): value is string => value !== undefined);
+  return `<article class="memory-event">
+    <div class="security-decision">${escapeHtml(event.operation)}</div>
+    <div><div class="badges"><span class="badge stage">${escapeHtml(event.stage)}</span><span class="badge">${escapeHtml(event.scope)}</span><span class="badge">#${formatNumber(event.seq)}</span></div><strong>${escapeHtml(event.source)}</strong><p>${escapeHtml(meta.join(" · "))}</p></div>
+    <time>${escapeHtml(event.ts)}</time>
+  </article>`;
+}
+
+function renderPromptVersion(prompt: ReportPromptVersion): string {
+  return `<article class="compact-card"><div class="badges"><span class="badge stage">${escapeHtml(prompt.stage)}</span><span class="badge">#${formatNumber(prompt.seq)}</span></div><strong>${escapeHtml(prompt.version)}</strong><p>${escapeHtml(prompt.model)} · structured ${prompt.structuredOutput ? "on" : "off"}</p></article>`;
+}
+
+function renderContextAssembly(context: ReportContextAssembly): string {
+  const sections = context.sections
+    .map(
+      (section) =>
+        `<li><strong>${escapeHtml(section.name)}</strong><small>${escapeHtml(section.source)} · ${formatNumber(section.tokenEstimate)} tokens${section.references.length === 0 ? "" : ` · ${escapeHtml(section.references.join(", "))}`}</small></li>`,
+    )
+    .join("");
+  return `<article class="compact-card"><div class="badges"><span class="badge stage">${escapeHtml(context.stage)}</span><span class="badge">#${formatNumber(context.seq)}</span><span class="badge">${formatNumber(context.tokenEstimate)} tokens</span></div><ul class="context-sections">${sections}</ul></article>`;
+}
+
 function emptyState(message: string): string {
   return `<div class="empty">${escapeHtml(message)}</div>`;
 }
@@ -273,6 +331,7 @@ const PLAYER_SCRIPT = String.raw`
 })();`;
 
 const STYLES = String.raw`
+.memory-list{display:flex;flex-direction:column;gap:8px;margin-bottom:56px}.memory-event{display:grid;grid-template-columns:88px 1fr auto;gap:16px;align-items:start;padding:14px;border:1px solid var(--line);border-left:3px solid var(--violet);border-radius:10px;background:var(--panel)}.memory-event .security-decision{color:var(--violet)}.memory-event strong,.compact-card strong{display:block;margin:8px 0 4px;overflow-wrap:anywhere}.memory-event p,.compact-card p{color:var(--muted);font-size:12px;margin:0;overflow-wrap:anywhere}.memory-event>time{color:var(--muted);font:10px ui-monospace,monospace}.prompt-list,.context-list{display:flex;flex-direction:column;gap:8px}.compact-card{padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.context-sections{list-style:none;padding:0;margin:12px 0 0}.context-sections li{padding:8px 0;border-top:1px solid #ffffff0d}.context-sections strong{margin:0;font-size:12px}.context-sections small{display:block;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}@media(max-width:760px){.memory-event{grid-template-columns:1fr}.memory-event>time{margin-top:4px}}
 :root{color-scheme:dark;--bg:#090b10;--panel:#11151d;--panel2:#171c27;--line:#2a3140;--text:#f4f6fb;--muted:#929cad;--cyan:#65e4ff;--violet:#a78bfa;--green:#54e39e;--red:#ff6b7a;--amber:#ffc857;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 15% -10%,#1f2950 0,transparent 32rem),var(--bg);color:var(--text)}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,#000,transparent 80%)}main{width:min(1180px,calc(100% - 40px));margin:auto;padding:56px 0 40px;position:relative}.hero{display:flex;justify-content:space-between;gap:32px;align-items:flex-start;padding-bottom:36px;border-bottom:1px solid var(--line)}.brand,.eyebrow{color:var(--cyan);font:700 11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;margin:0 0 12px}.hero h1{font-size:clamp(28px,5vw,58px);letter-spacing:-.045em;margin:0;overflow-wrap:anywhere}.requirement{max-width:780px;color:#c8cfdb;font-size:18px;line-height:1.6;margin:18px 0 0;white-space:pre-wrap}.status{padding:10px 14px;border:1px solid;border-radius:999px;font:800 12px ui-monospace,monospace;letter-spacing:.08em}.status.succeeded{color:var(--green);background:#54e39e12}.status.failed,.status.blocked{color:var(--red);background:#ff6b7a12}.status.running{color:var(--amber);background:#ffc85712}.failure{display:flex;gap:18px;margin-top:28px;padding:24px;border:1px solid #ff6b7a66;background:linear-gradient(110deg,#ff6b7a18,transparent);border-radius:14px}.failure-mark{display:grid;place-items:center;flex:0 0 42px;height:42px;border-radius:50%;background:var(--red);color:#190307;font-weight:900;font-size:24px}.failure h2{margin:0 0 8px}.failure p:last-child{margin:0;color:#ffd4d8;white-space:pre-wrap}.overview{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin:28px 0 60px;background:var(--line);border:1px solid var(--line);border-radius:14px;overflow:hidden}.metric{background:#0e1219;padding:22px}.metric span{display:block;color:var(--muted);font-size:12px;margin-bottom:8px}.metric strong{font:700 25px ui-monospace,monospace}.section-heading{display:flex;align-items:flex-end;justify-content:space-between;margin:0 0 18px}.section-heading h2{font-size:26px;letter-spacing:-.025em;margin:0}.stage-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:64px}.stage-card{background:linear-gradient(145deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:12px;padding:18px}.stage-name{display:flex;align-items:center;justify-content:space-between;font:800 13px ui-monospace,monospace;letter-spacing:.08em}.stage-name i{width:7px;height:7px;border-radius:50%;background:var(--violet);box-shadow:0 0 16px var(--violet)}dl{margin:20px 0 0}dl div{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-top:1px solid #ffffff0d}dt{color:var(--muted);font-size:12px}dd{margin:0;font:600 12px ui-monospace,monospace;text-align:right}.player{display:flex;gap:8px}button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:9px 13px;cursor:pointer}button:hover{border-color:#56627a}button.primary{background:var(--cyan);border-color:var(--cyan);color:#061014;font-weight:800}button:disabled{opacity:.35;cursor:not-allowed}.notice{border:1px solid #ffc85755;background:#ffc85712;color:#ffdf94;padding:12px 14px;border-radius:10px;margin-bottom:16px;font-size:13px}.timeline{border-top:1px solid var(--line);margin-bottom:64px}.timeline-group{display:grid;grid-template-columns:130px 1fr;border-bottom:1px solid var(--line);padding:22px 0}.rail-label{position:sticky;top:20px;align-self:start;display:flex;flex-direction:column;gap:5px;font:800 13px ui-monospace,monospace;color:var(--cyan)}.rail-label small{color:var(--muted);font-weight:400}.event-list{display:flex;flex-direction:column;gap:10px}.timeline-item{display:grid;grid-template-columns:14px 1fr;gap:12px;padding:12px 14px 12px 6px;border:1px solid transparent;border-radius:10px;transition:.2s}.timeline-item.active{background:#65e4ff0c;border-color:#65e4ff88;box-shadow:0 0 24px #65e4ff0d}.event-dot{width:8px;height:8px;background:#556176;border:2px solid var(--bg);outline:1px solid #556176;border-radius:50%;margin-top:6px}.active .event-dot{background:var(--cyan);outline-color:var(--cyan);box-shadow:0 0 14px var(--cyan)}.event-meta{display:flex;justify-content:space-between;gap:16px;color:var(--muted)}.event-meta code{color:#c6d0e2;font-size:12px}.event-meta time{font:11px ui-monospace,monospace}.event-content p{margin:7px 0 8px;line-height:1.5;white-space:pre-wrap}.badges{display:flex;flex-wrap:wrap;gap:6px}.badge{display:inline-block;border:1px solid #374054;border-radius:999px;color:#aeb8c9;padding:3px 7px;font:600 10px ui-monospace,monospace}.badge.stage{color:var(--cyan);border-color:#65e4ff44}.badge.outcome.passed,.badge.outcome.succeeded{color:var(--green);border-color:#54e39e44}.badge.outcome.failed,.badge.outcome.rejected{color:var(--red);border-color:#ff6b7a44}.badge.rework{color:var(--amber);border-color:#ffc85744}details{margin-top:11px}details summary{cursor:pointer;color:var(--muted);font-size:12px}pre{max-height:360px;overflow:auto;background:#080a0e;border:1px solid var(--line);border-radius:8px;padding:12px;color:#bfc9da;font:11px/1.55 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.stage-empty,.empty{padding:20px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);font-size:13px}.split{display:grid;grid-template-columns:1fr 1fr;gap:36px;margin-bottom:56px}.gate-list{display:flex;flex-direction:column;gap:10px}.gate{border:1px solid var(--line);border-left:3px solid;padding:16px;border-radius:10px;background:var(--panel)}.gate.passed{border-left-color:var(--green)}.gate.rejected{border-left-color:var(--red)}.gate strong{display:block;margin:12px 0 5px}.gate p{color:var(--muted);font-size:13px;line-height:1.5;margin:0;white-space:pre-wrap}.artifact-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}.artifact-list li{display:flex;gap:10px;padding:13px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.artifact-list strong{display:block;font:600 12px ui-monospace,monospace;overflow-wrap:anywhere}.artifact-list small{display:block;color:var(--muted);margin-top:5px}.security-list{display:flex;flex-direction:column;gap:8px;margin-bottom:56px}.security-event{display:grid;grid-template-columns:88px 1fr auto;gap:16px;align-items:start;padding:14px;border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:10px;background:var(--panel)}.security-event.approved,.security-event.allowed{border-left-color:var(--green)}.security-event.denied{border-left-color:var(--red)}.security-decision{font:800 11px ui-monospace,monospace;color:var(--amber)}.security-event.approved .security-decision,.security-event.allowed .security-decision{color:var(--green)}.security-event.denied .security-decision{color:var(--red)}.security-event strong{display:block;margin:8px 0 4px}.security-event p{color:var(--muted);font-size:12px;margin:0;overflow-wrap:anywhere}.security-event>time{color:var(--muted);font:10px ui-monospace,monospace}footer{display:grid;gap:8px;padding-top:24px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}footer code{color:#b9c4d7;overflow-wrap:anywhere}@media(max-width:760px){main{width:min(100% - 24px,1180px);padding-top:28px}.hero{display:block}.status{display:inline-block;margin-top:20px}.overview{grid-template-columns:1fr 1fr}.stage-grid{grid-template-columns:1fr}.timeline-heading{display:block}.player{margin-top:16px}.timeline-group{grid-template-columns:1fr;gap:16px}.rail-label{position:static}.event-meta{display:block}.event-meta time{display:block;margin-top:4px}.split{grid-template-columns:1fr}.requirement{font-size:15px}.security-event{grid-template-columns:1fr}.security-event>time{margin-top:4px}}
 `;

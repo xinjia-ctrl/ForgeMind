@@ -18,6 +18,36 @@ export interface EventDataMap {
     readonly inputTokens: number;
     readonly outputTokens: number;
     readonly promptFingerprint: string;
+    readonly promptVersion?: string;
+    readonly structuredOutput?: boolean;
+  };
+  readonly "memory.recalled": {
+    readonly runId: string;
+    readonly stage: StageId;
+    readonly scope: "working" | "episodic" | "project" | "semantic";
+    readonly source: string;
+    readonly score: number;
+    readonly reason: string;
+    readonly content: unknown;
+    readonly used: boolean;
+  };
+  readonly "memory.stored": {
+    readonly runId: string;
+    readonly stage: StageId;
+    readonly scope: "working" | "episodic" | "project" | "semantic";
+    readonly kind: string;
+    readonly path: string;
+  };
+  readonly "context.assembled": {
+    readonly runId: string;
+    readonly stage: StageId;
+    readonly sections: readonly {
+      readonly name: string;
+      readonly source: string;
+      readonly tokenEstimate: number;
+      readonly references: readonly string[];
+    }[];
+    readonly tokenEstimate: number;
   };
   readonly "tool.called": {
     readonly runId: string;

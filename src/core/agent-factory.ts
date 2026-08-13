@@ -6,6 +6,7 @@ import { PlanAgent, PLAN_TOOLS } from "../agents/plan-agent.js";
 import { ReviewAgent, REVIEW_TOOLS } from "../agents/review-agent.js";
 import { TestAgent, TEST_TOOLS } from "../agents/test-agent.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
+import type { MemoryProvider } from "../memory/memory-provider.js";
 import type { ApprovalGateway } from "../policy/gateway.js";
 import type { PolicyResolver } from "../policy/types.js";
 import { ScopedToolExecutor, type ToolRegistry } from "../tools/executor.js";
@@ -25,6 +26,7 @@ interface AgentFactoryOptions {
   readonly skipGitHooks: boolean;
   readonly policyResolver: PolicyResolver;
   readonly approvalGateway: ApprovalGateway;
+  readonly memory: MemoryProvider;
 }
 
 export interface AgentFactory {
@@ -57,6 +59,7 @@ export class DefaultAgentFactory implements AgentFactory {
       eventLog: this.#options.eventLog,
       toolExecutor,
       budget: this.#options.budgets[stage],
+      memory: this.#options.memory,
     };
 
     switch (stage) {

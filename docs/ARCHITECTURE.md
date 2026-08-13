@@ -1,6 +1,6 @@
 # ForgeMind 架构设计文档（ADR）
 
-> 版本：v0.4（对齐 PRD v0.4，安全策略、审批与沙箱已实现，45/45 测试通过）
+> 版本：v0.5（对齐 PRD v0.5，记忆、上下文与提示词工程已实现，完整测试套件通过）
 > 状态：已实现
 > 技术栈：TypeScript / Node（>=22），单一进程、运行时零第三方依赖（无 DB / MQ / 框架）
 
@@ -65,7 +65,9 @@ src/
 ├── agents/     # PLAN / ARCH / CODE / REVIEW / TEST / COMMIT 六个 StageAgent
 ├── tools/      # 9 个工具 + ToolPolicy + 路径安全 + 进程执行
 ├── llm/        # ChatProvider 接口 + OpenAI 兼容 + Fake
-├── memory/     # MemoryProvider 接口 + Noop
+├── memory/     # LayeredMemory + EventLog 情景检索 + 项目记忆 + Noop
+├── prompts/    # 五段式版本化 Prompt 资源、严格 JSON Schema 与加载器
+├── context/    # 相关性排序与来源标记的 Context Assembler 纯函数
 ├── runtime/    # CLI、run 编排入口、Git 工作区、测试命令解析
 ├── report/     # 事件投影、HTML 纯渲染、报告 IO 装配
 ├── policy/     # 动作级三态解析 + 审批网关
@@ -103,15 +105,17 @@ Orchestrator 对 `kind` 做穷举校验（`outputArtifacts`），返回错误类
 
 EventLog 以 JSONL 落盘，事件形如 `{v:1, seq, ts, type, data}`，`EventDataMap`（`src/core/events.ts`）为唯一类型源，golden 测试锁定快照：
 
-| type                                                 | 关键 data                                                   | 用途           |
-| ---------------------------------------------------- | ----------------------------------------------------------- | -------------- |
-| `run.started` / `run.finished`                       | runId, requirement, branch / status, summary                | 运行边界       |
-| `stage.started` / `stage.completed` / `stage.failed` | stage, attempt / status / kind, error, stack                | 阶段生命周期   |
-| `llm.called`                                         | model, inputTokens, outputTokens, promptFingerprint(sha256) | 决策点 + 成本  |
-| `tool.called`                                        | tool, args, result, policy                                  | 审计（含脱敏） |
-| `approval.requested/approved/rejected`               | action, policy, mode, source/reason                         | 安全决策审计   |
-| `artifact.produced`                                  | path, kind, summary                                         | 产物追溯       |
-| `gate.rejected` / `gate.passed`                      | reason, feedback / evidence                                 | 门禁证据       |
+| type                                                 | 关键 data                                                         | 用途           |
+| ---------------------------------------------------- | ----------------------------------------------------------------- | -------------- |
+| `run.started` / `run.finished`                       | runId, requirement, branch / status, summary                      | 运行边界       |
+| `stage.started` / `stage.completed` / `stage.failed` | stage, attempt / status / kind, error, stack                      | 阶段生命周期   |
+| `llm.called`                                         | model, tokens, promptFingerprint, promptVersion, structuredOutput | 决策点 + 成本  |
+| `memory.recalled` / `memory.stored`                  | scope, source/路径, score, reason, used                           | 记忆审计       |
+| `context.assembled`                                  | sections(source/references/tokens), tokenEstimate                 | 上下文审计     |
+| `tool.called`                                        | tool, args, result, policy                                        | 审计（含脱敏） |
+| `approval.requested/approved/rejected`               | action, policy, mode, source/reason                               | 安全决策审计   |
+| `artifact.produced`                                  | path, kind, summary                                               | 产物追溯       |
+| `gate.rejected` / `gate.passed`                      | reason, feedback / evidence                                       | 门禁证据       |
 
 ---
 
@@ -142,7 +146,7 @@ CREATED → RUNNING → SUCCEEDED | FAILED
 
 - 单实例单次运行：`run()` 检测已运行即抛 `StageFailure`，实例不可复用（配合 AgentFactory 每阶段新建）。
 - `run()` 统一把状态迁移、`stage.started/completed/failed` 事件、Token 预算挂接封装好，子类只实现 `execute()`。
-- `completeJson()`：单次 LLM 调用（`temperature=0, seed=42`），前置估算 + 调用后按 `usage` 结算预算，落 `llm.called`，解析并校验 JSON。
+- `completeJson()`：加载 `prompts/*.v1.md`，装配来源标记上下文和 PLAN/ARCH 只读记忆；单次 LLM 调用（`temperature=0, seed=42`）优先请求原生 JSON Schema，能力不可用时走既有 JSON 解析，不做 LLM 重试。调用后按 `usage` 结算预算并记录 prompt 版本。
 
 ### 5.3 阶段契约与工具白名单
 
@@ -174,7 +178,7 @@ CREATED → RUNNING → SUCCEEDED | FAILED
 
 ### 6.2 四条铁律（强制层：AgentFactory 注入 + BaseAgent 统一执行）
 
-1. **代码检索优先于投喂**：Agent 只能经工具触达代码；CODE 阶段上下文仅取架构预期文件 + glob 结果前 8 个文本文件、每文件前 400 行、总量 ≤80K UTF-8 字节（`collectWorkspaceContext`）。`truncateUtf8` 保证不切断多字节字符。
+1. **代码检索优先于投喂**：Agent 只能经工具触达代码；CODE 阶段按“ARCH 预期文件 → grep 命中 → 文件名关键词”排序，最多 8 个文本文件、每文件前 400 行、总量 ≤80K UTF-8 字节。`truncateUtf8` 保证不切断多字节字符。
 2. **跨阶段只传摘要**：下一阶段 prompt 只带 `summary`，不带完整产物。
 3. **工具结果分片**：`read_file` 按行范围 + 字节上限，grep 最多 200 条命中，glob 最多 500 文件，diff 按字节截断并置 `truncated`。
 4. **REVIEW 超限即驳回**：diff 超出审查预算时，ReviewAgent 直接 `rejected`（reason=上下文超限），引导拆小改动——预算失效转成产品级反馈，而非静默放行。
@@ -246,15 +250,16 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 
 ---
 
-## 9. Memory 设计（对齐 PRD：MVP 不做跨项目长期记忆）
+## 9. Memory 设计（项目级 L2/L3，默认关闭）
 
-| 类型             | MVP                      | 说明                          |
-| ---------------- | ------------------------ | ----------------------------- |
-| 短期（单次 Run） | TaskContext + 工作区产物 | 生命周期 = 一次 Run，天然有界 |
-| 项目内知识       | 仓库 `docs/` + git 历史  | 复用 git 载体                 |
-| 跨项目 / 向量库  | Noop（Phase 4）          | 仅留接口                      |
+| 层          | 载体                                         | 当前行为                                   |
+| ----------- | -------------------------------------------- | ------------------------------------------ |
+| L1 working  | 不可变 `TaskContext` + 阶段产物              | 所有阶段已有，生命周期为单 Run             |
+| L2 episodic | `<git-dir>/forgemind/runs/*.jsonl`           | 按需求关键词与运行结果检索历史轨迹         |
+| L3 project  | `.forgemind/memory/{decisions,lessons}.json` | ARCH/门禁事实确定性投影，按 tag/关键词召回 |
+| L4 semantic | `null`                                       | 接口占位，容器跳过且不报错                 |
 
-`MemoryProvider`（`src/memory/memory-provider.ts`）：`remember / recall`。Orchestrator 已在阶段完成时调用 `remember`（当前 Noop），Phase 4 换向量实现不动其他代码。
+`MemoryProvider` 保持统一 `remember / rememberGate? / recall(query, options)` 接口。默认注入 `NoopMemoryProvider`；只有 CLI `--memory` 或 API 显式传入 Provider 才启用。PLAN/ARCH 在 `BaseAgent` 生命周期内只读注入召回结果；项目记忆写入需 `--memory` 确认，运行入口将目录加入 Git 本地 exclude。记忆内容不参与控制流决策，也不修改用户代码。
 
 ---
 
@@ -284,11 +289,12 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 
 `BaseAgent` 在 `stage.failed` 写入分类；该字段保持可选以兼容 v0.2 日志。未分类的运行时异常按框架级 `FATAL` 处理，避免未知错误静默降级。
 
-### 11.2 测试策略（45/45 通过，`npm test` = build + `node --test`）
+### 11.2 测试策略（完整套件通过，`npm test` = build + `node --test`）
 
-- **单元**：既有编排、安全与报告测试；新增配置分层、三态规则、审批审计、容器参数/运行时检测、报告安全投影。
-- **Golden**：`tests/golden/event-schema.snapshot.json` 锁定事件契约，防 Schema 漂移。
-- **E2E**：既有真实测试/commit/可复现性；新增完整 Run 的 COMMIT 审批拒绝路径和报告 CLI 安全面板。
+- **单元**：覆盖编排、安全、报告、分层记忆、损坏记忆 fail-fast、Prompt 资源/Schema、结构化能力降级、上下文排序、工作区检索与事件并发写入。
+- **Golden**：`tests/golden/event-schema.snapshot.json` 锁定新增 memory/context/prompt 事件契约，防 Schema 漂移。
+- **E2E**：保留真实测试/commit/可复现性、审批拒绝与报告；新增双 Run 记忆召回及记忆不进入 commit 的验证。
+- **Eval**：`npm run eval` 用 4 条代表性需求与 FakeProvider 输出 A/B 通过率、返工、越权调用与 token 成本。
 - **质量门禁**：`npm run check` 串行执行 TypeScript 严格检查、类型感知 ESLint、Prettier 检查与测试；`.github/workflows/ci.yml` 在 push / pull request 中运行同一门禁。
 
 ---
@@ -306,22 +312,25 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 
 **v0.4 已解决决策**：三态策略与审批网关进入统一 Tool 执行链；测试命令容器化且资源受限；本机降级显式且可审计；报告新增安全面板。
 
+**v0.5 已解决决策**：L2/L3 项目记忆确定性投影且显式启用；Prompt 资源化并记录版本；原生结构化输出带能力降级且不重试；上下文按相关性装配并在报告审计；评测集提供 A/B 护栏。
+
 ## 13. 演进路线（对齐 PRD §7）
 
-| 阶段             | 架构动作                            | 接缝                                                 |
-| ---------------- | ----------------------------------- | ---------------------------------------------------- |
-| Phase 2 可观测   | ✅ 静态离线报告；实时事件订阅待后续 | 纯投影已就绪；实时能力可复用 EventLog                |
-| Phase 3 生产级   | ✅ 沙箱与审批；并发任务待后续       | `ProcessRunner`/`ApprovalGateway` 可继续扩展远程实现 |
-| Phase 4 长期记忆 | 向量库 + 语义检索                   | `MemoryProvider` 替换 Noop                           |
+| 阶段             | 架构动作                                | 接缝                                                 |
+| ---------------- | --------------------------------------- | ---------------------------------------------------- |
+| Phase 2 可观测   | ✅ 静态离线报告；实时事件订阅待后续     | 纯投影已就绪；实时能力可复用 EventLog                |
+| Phase 3 生产级   | ✅ 沙箱与审批；并发任务待后续           | `ProcessRunner`/`ApprovalGateway` 可继续扩展远程实现 |
+| Phase 4 长期记忆 | ✅ 项目 L2/L3；跨项目向量语义检索待后续 | `LayeredMemory` 的 semantic 接缝可独立替换           |
 
 **明确不做（防过度设计）**：不引入 MQ、DB、图/事件引擎、Agent 自由对话拓扑。单进程、顺序执行、JSONL 落盘支撑演示闭环，且迁移路径清晰。
 
 ---
 
-## 14. 与 PRD v0.4 的对应关系
+## 14. 与 PRD v0.5 的对应关系
 
 - DoD 前四项（全流程 / 审查真实输出 / 测试真实通过 / 有效 commit）：已由 e2e 验证 ✅。
 - DoD 第五项（可复现）：`workflowSignature` 双 Run 一致性 + 相同门禁判定已由 e2e 验证 ✅；`temperature=0 + seed=42` 尽力稳定模型输出，非比特级承诺。
 - Phase 2 P0（时间线 / 门禁 / 失败 / 统计 / 离线报告）：纯函数投影 + CLI 成功/失败 e2e 已验证 ✅。
-- Phase 3 P0/P1（策略 / 审批 / 沙箱 / 资源限制 / 安全报告 / CLI 交互）：45 项测试验证 ✅。
-- 非目标（长期记忆 / 并发 / 云托管）：架构接缝已留，本轮不实现。
+- Phase 3 P0/P1（策略 / 审批 / 沙箱 / 资源限制 / 安全报告 / CLI 交互）：回归保持 ✅。
+- v0.5 P0（L2/L3 记忆 / Prompt 版本 / 结构化输出）与 P1（相关性上下文 / 报告审计 / Eval）：完整测试套件与 4 场景评测验证 ✅。
+- 非目标（L4 跨项目语义记忆 / 并发 / 云托管）：架构接缝已留，本轮不实现。

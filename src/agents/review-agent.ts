@@ -40,16 +40,16 @@ export class ReviewAgent extends BaseAgent {
         },
       };
     }
-    const response = await this.completeJson(
-      ctx,
-      [
-        "You are ForgeMind's read-only code reviewer.",
-        "Check correctness, security, maintainability, architectural consistency, and meaningful test coverage.",
-        "Reject any material defect. Return JSON only with approved:boolean, reason, feedback, evidence.",
-        "Feedback must be concrete and directly actionable.",
-      ].join(" "),
-      `Requirement: ${ctx.requirement}\nPlan: ${ctx.plan?.summary ?? "missing"}\nArchitecture: ${ctx.architecture?.summary ?? "missing"}\nDiff (possibly truncated):\n${diff}`,
-    );
+    const response = await this.completeJson(ctx, [
+      { name: "Requirement", content: ctx.requirement, source: "contract" },
+      { name: "Plan", content: ctx.plan?.summary ?? "missing", source: "contract" },
+      {
+        name: "Architecture",
+        content: ctx.architecture?.summary ?? "missing",
+        source: "contract",
+      },
+      { name: "Reviewed diff", content: diff, source: "retrieval", references: ["git diff"] },
+    ]);
     const approved = requiredBoolean(response, "approved");
     const fingerprint = diffFingerprint(diff);
     const gate: GateResult = {

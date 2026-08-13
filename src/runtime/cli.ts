@@ -30,6 +30,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         "config",
         "yes",
         "no-approve",
+        "memory",
       ]);
       return await runCommand(parsed.values);
     }
@@ -80,6 +81,7 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
   const skipGitHooks = parseBooleanOption(values, "skip-git-hooks", false);
   const approveAll = parseBooleanOption(values, "yes", false);
   const noApprove = parseBooleanOption(values, "no-approve", false);
+  const memory = parseBooleanOption(values, "memory", false);
   if (approveAll && noApprove) throw new Error("--yes and --no-approve cannot be combined");
   const apiKey = process.env["OPENAI_API_KEY"];
   if (apiKey === undefined || apiKey.length === 0) {
@@ -105,6 +107,7 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
     skipGitHooks,
     approveAll,
     noApprove,
+    memory,
     ...(configPath === undefined ? {} : { configPath }),
   });
   process.stdout.write(
@@ -140,7 +143,7 @@ async function replayCommand(values: ReadonlyMap<string, string>): Promise<numbe
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const command = argv[0] ?? "help";
   const values = new Map<string, string>();
-  const booleanOptions = new Set(["skip-git-hooks", "yes", "no-approve"]);
+  const booleanOptions = new Set(["skip-git-hooks", "yes", "no-approve", "memory"]);
   for (let index = 1; index < argv.length;) {
     const flag = argv[index];
     if (flag === undefined || !flag.startsWith("--")) {
@@ -191,7 +194,7 @@ function assertKnownOptions(values: ReadonlyMap<string, string>, allowed: readon
 
 function printHelp(): void {
   process.stdout.write(
-    `ForgeMind\n\nUsage:\n  forge-mind run --repo <path> --requirement <text> [--model <name>] [--test-command <command>] [--max-rework <n>] [--config <path>] [--yes | --no-approve] [--skip-git-hooks]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n\nEnvironment:\n  OPENAI_API_KEY            Required for run\n  OPENAI_BASE_URL           OpenAI-compatible API base URL\n  FORGEMIND_MODEL           Default model name\n  FORGEMIND_GLOBAL_CONFIG   Global policy config path\n  FORGEMIND_POLICY_JSON     Environment policy override\n`,
+    `ForgeMind\n\nUsage:\n  forge-mind run --repo <path> --requirement <text> [--model <name>] [--test-command <command>] [--max-rework <n>] [--config <path>] [--yes | --no-approve] [--memory] [--skip-git-hooks]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n\nEnvironment:\n  OPENAI_API_KEY                 Required for run\n  OPENAI_BASE_URL                OpenAI-compatible API base URL\n  FORGEMIND_MODEL                Default model name\n  FORGEMIND_STRUCTURED_OUTPUT    Set 0 to disable native structured output\n  FORGEMIND_GLOBAL_CONFIG        Global policy config path\n  FORGEMIND_POLICY_JSON          Environment policy override\n`,
   );
 }
 

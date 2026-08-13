@@ -19,16 +19,15 @@ export class ArchitectureAgent extends BaseAgent {
 
   protected async execute(_input: StageInput, ctx: TaskContext): Promise<StageOutput> {
     if (ctx.plan === null) throw new StageFailure("ARCH requires a completed plan");
-    const response = await this.completeJson(
-      ctx,
-      [
-        "You are ForgeMind's architecture agent.",
-        "Design the smallest maintainable change that follows the repository's existing architecture.",
-        "Return JSON only with decisions[], files[{path,purpose}], risks[], summary.",
-        "Do not invent a parallel framework or duplicate existing abstractions.",
-      ].join(" "),
-      `Requirement: ${ctx.requirement}\nPlan summary: ${ctx.plan.summary}\nAcceptance criteria: ${ctx.plan.acceptanceCriteria.join("; ")}`,
-    );
+    const response = await this.completeJson(ctx, [
+      { name: "Requirement", content: ctx.requirement, source: "contract" },
+      { name: "Plan summary", content: ctx.plan.summary, source: "contract" },
+      {
+        name: "Acceptance criteria",
+        content: ctx.plan.acceptanceCriteria.join("; "),
+        source: "contract",
+      },
+    ]);
     const architecture: ArchDecision = {
       decisions: stringArray(response, "decisions"),
       files: objectArray(response, "files").map((file) => ({
