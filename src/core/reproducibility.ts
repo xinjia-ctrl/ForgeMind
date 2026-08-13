@@ -16,6 +16,24 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
       switch (event.type) {
         case "run.started":
           return { type: event.type };
+        case "task.started":
+          return {
+            type: event.type,
+            operation: event.data.taskId,
+            outcome: "started",
+          };
+        case "task.completed":
+          return {
+            type: event.type,
+            operation: event.data.taskId,
+            outcome: "SUCCEEDED",
+          };
+        case "task.failed":
+          return {
+            type: event.type,
+            operation: event.data.taskId,
+            outcome: event.data.status,
+          };
         case "stage.started":
           return {
             type: event.type,

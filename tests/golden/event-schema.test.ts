@@ -19,6 +19,39 @@ it("keeps the versioned event and replay contract stable", async () => {
       },
     });
     await log.append({
+      type: "task.started",
+      data: {
+        runId: "golden-run",
+        taskId: "backend",
+        childRunId: "golden-run-backend",
+        repo: "/repos/api",
+        requirement: "Add deterministic replay API",
+      },
+    });
+    await log.append({
+      type: "task.completed",
+      data: {
+        runId: "golden-run",
+        taskId: "backend",
+        childRunId: "golden-run-backend",
+        repo: "/repos/api",
+        branch: "forgemind/golden-run-backend",
+        status: "SUCCEEDED",
+        summary: "API committed",
+      },
+    });
+    await log.append({
+      type: "task.failed",
+      data: {
+        runId: "golden-run",
+        taskId: "integration",
+        childRunId: "golden-run-integration",
+        repo: "/repos/web",
+        status: "BLOCKED",
+        error: "Blocked by failed dependencies: frontend",
+      },
+    });
+    await log.append({
       type: "stage.started",
       data: { runId: "golden-run", stage: "PLAN", attempt: 1 },
     });
@@ -107,7 +140,7 @@ it("keeps the versioned event and replay contract stable", async () => {
     const rawEvents = await log.load();
     assert.deepEqual(
       rawEvents.map((event) => event.seq),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

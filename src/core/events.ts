@@ -1,10 +1,39 @@
 import type { RunStatus, StageId, StageStatus } from "./types.js";
 
-export interface EventDataMap {
+interface EventIndex {
+  readonly taskId?: string;
+}
+
+interface EventPayloadMap {
   readonly "run.started": {
     readonly runId: string;
     readonly requirement: string;
     readonly branch: string;
+    readonly parentRunId?: string;
+  };
+  readonly "task.started": {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly childRunId: string;
+    readonly repo: string;
+    readonly requirement: string;
+  };
+  readonly "task.completed": {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly childRunId: string;
+    readonly repo: string;
+    readonly branch: string;
+    readonly status: "SUCCEEDED";
+    readonly summary: string;
+  };
+  readonly "task.failed": {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly childRunId: string;
+    readonly repo: string;
+    readonly status: "FAILED" | "BLOCKED";
+    readonly error: string;
   };
   readonly "stage.started": {
     readonly runId: string;
@@ -120,6 +149,10 @@ export interface EventDataMap {
     readonly summary: string;
   };
 }
+
+export type EventDataMap = {
+  readonly [K in keyof EventPayloadMap]: EventPayloadMap[K] & EventIndex;
+};
 
 export type EventType = keyof EventDataMap;
 

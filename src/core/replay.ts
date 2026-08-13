@@ -22,7 +22,7 @@ export function replay(events: readonly ForgeMindEvent[]): Timeline {
   let status: Timeline["status"] = "RUNNING";
 
   const entries = ordered.map((event): TimelineEntry => {
-    const data = event.data as Record<string, unknown>;
+    const data = event.data as unknown as Record<string, unknown>;
     if (typeof data["runId"] === "string") runId = data["runId"];
     if (event.type === "run.started") requirement = event.data.requirement;
     if (event.type === "run.finished") status = event.data.status;
@@ -52,6 +52,12 @@ function describe(event: ForgeMindEvent): string {
   switch (event.type) {
     case "run.started":
       return `Run started on ${event.data.branch}`;
+    case "task.started":
+      return `Task ${event.data.taskId} started as ${event.data.childRunId}`;
+    case "task.completed":
+      return `Task ${event.data.taskId} succeeded on ${event.data.branch}`;
+    case "task.failed":
+      return `Task ${event.data.taskId} ${event.data.status.toLocaleLowerCase()}: ${event.data.error}`;
     case "stage.started":
       return `Attempt ${event.data.attempt} started`;
     case "llm.called":

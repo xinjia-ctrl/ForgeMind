@@ -179,6 +179,10 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
         requirement = event.data.requirement;
         runStartedAt = timestamp(event.ts);
         break;
+      case "task.started":
+      case "task.completed":
+      case "task.failed":
+        break;
       case "stage.started":
         openStarts.set(event.data.stage, timestamp(event.ts));
         break;
@@ -487,6 +491,9 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "stage.failed":
       return event.data.stage;
     case "run.started":
+    case "task.started":
+    case "task.completed":
+    case "task.failed":
     case "run.finished":
       return null;
   }
@@ -551,6 +558,12 @@ function eventSummary(event: ForgeMindEvent): string {
   switch (event.type) {
     case "run.started":
       return `Run started on ${event.data.branch}`;
+    case "task.started":
+      return `Task ${event.data.taskId} started as ${event.data.childRunId}`;
+    case "task.completed":
+      return `Task ${event.data.taskId} succeeded on ${event.data.branch}`;
+    case "task.failed":
+      return `Task ${event.data.taskId} ${event.data.status.toLocaleLowerCase()}: ${event.data.error}`;
     case "stage.started":
       return `Attempt ${event.data.attempt} started`;
     case "llm.called":
@@ -613,6 +626,9 @@ function isCritical(event: ReportTimelineEvent): boolean {
   return (
     event.type === "run.started" ||
     event.type === "run.finished" ||
+    event.type === "task.started" ||
+    event.type === "task.completed" ||
+    event.type === "task.failed" ||
     event.type === "stage.failed" ||
     event.type === "approval.requested" ||
     event.type === "approval.approved" ||

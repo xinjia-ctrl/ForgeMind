@@ -5,17 +5,30 @@ import type { EventInput, ForgeMindEvent } from "./events.js";
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 
+export interface EventLogIndex {
+  readonly parentRunId?: string;
+  readonly taskId?: string;
+}
+
 export class EventLog {
   readonly #filePath: string;
+  readonly #index: EventLogIndex;
   #nextSeq = 1;
   #appendQueue: Promise<void> = Promise.resolve();
 
-  private constructor(filePath: string) {
+  private constructor(filePath: string, index: EventLogIndex = {}) {
     this.#filePath = filePath;
+    this.#index = index;
   }
 
-  public static async create(directory: string, runId: string): Promise<EventLog> {
+  public static async create(
+    directory: string,
+    runId: string,
+    index: EventLogIndex = {},
+  ): Promise<EventLog> {
     assertValidRunId(runId);
+    if (index.parentRunId !== undefined) assertValidRunId(index.parentRunId);
+    if (index.taskId !== undefined) assertValidTaskId(index.taskId);
     await mkdir(directory, { recursive: true });
     const filePath = path.join(directory, `${runId}.jsonl`);
     try {
@@ -26,7 +39,7 @@ export class EventLog {
         cause: error,
       });
     }
-    return new EventLog(filePath);
+    return new EventLog(filePath, index);
   }
 
   public static open(directory: string, runId: string): EventLog {
@@ -48,11 +61,19 @@ export class EventLog {
   }
 
   private async appendImmediately(input: EventInput): Promise<ForgeMindEvent> {
+    const data = {
+      ...input.data,
+      ...(this.#index.taskId === undefined ? {} : { taskId: this.#index.taskId }),
+      ...(input.type !== "run.started" || this.#index.parentRunId === undefined
+        ? {}
+        : { parentRunId: this.#index.parentRunId }),
+    };
     const event = {
       v: 1,
       seq: this.#nextSeq,
       ts: new Date().toISOString(),
-      ...input,
+      type: input.type,
+      data,
     } as ForgeMindEvent;
 
     try {
@@ -93,6 +114,12 @@ export class EventLog {
 export function assertValidRunId(runId: string): void {
   if (!RUN_ID_PATTERN.test(runId)) {
     throw new FatalFailure(`Invalid run id: ${runId}`);
+  }
+}
+
+export function assertValidTaskId(taskId: string): void {
+  if (!RUN_ID_PATTERN.test(taskId)) {
+    throw new FatalFailure(`Invalid task id: ${taskId}`);
   }
 }
 

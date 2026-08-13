@@ -5,7 +5,7 @@ import { DEFAULT_TOKEN_BUDGETS } from "../config/budgets.js";
 import { loadPolicyConfig, type ForgeMindPolicyConfig } from "../config/policy.js";
 import { DefaultAgentFactory } from "../core/agent-factory.js";
 import { createTaskContext } from "../core/context.js";
-import { assertValidRunId, EventLog } from "../core/event-log.js";
+import { assertValidRunId, assertValidTaskId, EventLog } from "../core/event-log.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import type { RunResult } from "../core/types.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
@@ -41,6 +41,8 @@ export interface RunOptions {
   readonly approvalGateway?: ApprovalGateway;
   readonly memory?: boolean;
   readonly memoryProvider?: MemoryProvider;
+  readonly parentRunId?: string;
+  readonly taskId?: string;
 }
 
 export interface RunExecution {
@@ -66,6 +68,8 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   }
   const runId = options.runId ?? createRunId();
   assertValidRunId(runId);
+  if (options.parentRunId !== undefined) assertValidRunId(options.parentRunId);
+  if (options.taskId !== undefined) assertValidTaskId(options.taskId);
   const inspected = await inspectGitWorkspace(options.repoPath);
   const testCommand = await resolveTestCommand(inspected.root, options.testCommand);
   const policyConfig =
@@ -81,7 +85,10 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   if (options.memory === true) await excludeProjectMemory(inspected.gitDirectory);
   const workspace = await prepareGitWorkspace(options.repoPath, runId);
   const eventsDirectory = path.join(workspace.gitDirectory, "forgemind", "runs");
-  const eventLog = await EventLog.create(eventsDirectory, runId);
+  const eventLog = await EventLog.create(eventsDirectory, runId, {
+    ...(options.parentRunId === undefined ? {} : { parentRunId: options.parentRunId }),
+    ...(options.taskId === undefined ? {} : { taskId: options.taskId }),
+  });
   const memory =
     options.memoryProvider ??
     (options.memory === true

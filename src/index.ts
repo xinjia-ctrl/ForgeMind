@@ -13,5 +13,18 @@ export { ProjectMemory } from "./memory/project-memory.js";
 export { EventLog } from "./core/event-log.js";
 export { Orchestrator } from "./core/orchestrator.js";
 export { OpenAICompatibleChatProvider } from "./llm/openai-compatible-provider.js";
+export { DagPlanner, parseDagPlan, validateDagTasks } from "./dag/plan.js";
+export { DagScheduler, childRunId } from "./dag/scheduler.js";
+export { ForgeMindTaskRunner } from "./dag/task-runner.js";
 export type { ChatProvider } from "./llm/chat-provider.js";
 export type { RunResult, TaskContext } from "./core/types.js";
+export type {
+  DagPlan,
+  DagResult,
+  DagTask,
+  DagTaskResult,
+  PRCandidate,
+  TaskExecution,
+  TaskRunner,
+  TaskStatus,
+} from "./dag/types.js";
