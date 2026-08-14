@@ -50,6 +50,10 @@ function isStage(value: unknown): value is StageId {
 
 function describe(event: ForgeMindEvent): string {
   switch (event.type) {
+    case "development.received":
+      return `Received ${event.data.developmentType} for ${event.data.objectKind} ${event.data.objectId}`;
+    case "trigger.decided":
+      return `${event.data.decision}: ${event.data.reason}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
     case "task.started":

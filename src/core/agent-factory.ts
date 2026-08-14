@@ -6,7 +6,7 @@ import { PlanAgent, PLAN_TOOLS } from "../agents/plan-agent.js";
 import { ReviewAgent, REVIEW_TOOLS } from "../agents/review-agent.js";
 import { TestAgent, TEST_TOOLS } from "../agents/test-agent.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
-import type { ApprovalContext } from "../auth/types.js";
+import type { ApprovalContext, RiskLevel } from "../auth/types.js";
 import type { MemoryProvider } from "../memory/memory-provider.js";
 import type { ApprovalGateway } from "../policy/gateway.js";
 import type { PolicyResolver } from "../policy/types.js";
@@ -29,6 +29,9 @@ interface AgentFactoryOptions {
   readonly approvalGateway: ApprovalGateway;
   readonly approvalContext?: ApprovalContext;
   readonly memory: MemoryProvider;
+  readonly toolAllowlist?: readonly string[];
+  readonly commandAllowlist?: readonly (readonly string[])[];
+  readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
 }
 
 export interface AgentFactory {
@@ -54,6 +57,9 @@ export class DefaultAgentFactory implements AgentFactory {
       policy,
       policyResolver: this.#options.policyResolver,
       approvalGateway: this.#options.approvalGateway,
+      ...(this.#options.riskTransform === undefined
+        ? {}
+        : { riskTransform: this.#options.riskTransform }),
       ...(this.#options.approvalContext === undefined
         ? {}
         : { approvalContext: this.#options.approvalContext }),
@@ -107,18 +113,32 @@ function policyFor(
   options: AgentFactoryOptions,
 ): ToolPolicy {
   const writable = stage === "PLAN" || stage === "ARCH" || stage === "CODE" || stage === "COMMIT";
+  const allowedTools =
+    options.toolAllowlist === undefined
+      ? tools
+      : tools.filter((tool) => options.toolAllowlist?.includes(tool) === true);
+  const allowedCommands =
+    stage !== "TEST"
+      ? []
+      : options.commandAllowlist === undefined
+        ? [options.testCommand]
+        : options.commandAllowlist.filter((command) => sameCommand(command, options.testCommand));
   return new ToolPolicy({
     workspaceRoot: options.workspaceRoot,
     stage,
-    allowedTools: tools,
+    allowedTools,
     writable,
     ...(stage === "PLAN" || stage === "ARCH"
       ? { writablePrefixes: [`docs/.forgemind/${options.runId}`] }
       : {}),
     ...(stage === "CODE" ? { forbiddenWritePrefixes: ["docs/.forgemind"] } : {}),
-    ...(stage === "TEST" ? { allowedCommands: [options.testCommand] } : {}),
+    ...(stage === "TEST" ? { allowedCommands } : {}),
     ...(stage === "COMMIT" ? { skipGitHooks: options.skipGitHooks } : {}),
     maxResultBytes: stage === "CODE" ? 128_000 : stage === "REVIEW" ? 72_000 : 32_000,
     commandTimeoutMs: stage === "TEST" ? 300_000 : 120_000,
   });
+}
+
+function sameCommand(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index]);
 }

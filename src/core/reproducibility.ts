@@ -14,6 +14,18 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
     .sort((left, right) => left.seq - right.seq)
     .map((event): WorkflowTraceStep => {
       switch (event.type) {
+        case "development.received":
+          return {
+            type: event.type,
+            operation: event.data.developmentType,
+            outcome: "received",
+          };
+        case "trigger.decided":
+          return {
+            type: event.type,
+            operation: event.data.ruleId ?? event.data.eventId,
+            outcome: event.data.decision,
+          };
         case "run.started":
           return { type: event.type };
         case "task.started":

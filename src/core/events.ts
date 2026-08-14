@@ -12,6 +12,29 @@ interface EventIndex {
 }
 
 interface EventPayloadMap {
+  readonly "development.received": {
+    readonly runId: string;
+    readonly actor: "agentic";
+    readonly eventId: string;
+    readonly source: "github" | "jira" | "ci" | "forgemind";
+    readonly developmentType:
+      "issue.updated" | "issue.assigned" | "ci.failed" | "pr.mentioned" | "approval.timed_out";
+    readonly repo: string;
+    readonly objectKind: "issue" | "pull_request" | "workflow" | "approval";
+    readonly objectId: string;
+    readonly occurredAt: string;
+  };
+  readonly "trigger.decided": {
+    readonly runId: string;
+    readonly actor: "agentic";
+    readonly eventId: string;
+    readonly repo: string;
+    readonly decision: "TRIGGER" | "IGNORE" | "MERGE" | "DEFER";
+    readonly reason: string;
+    readonly ruleId?: string;
+    readonly requestId?: string;
+    readonly retryAt?: string;
+  };
   readonly "run.started": {
     readonly runId: string;
     readonly requirement: string;

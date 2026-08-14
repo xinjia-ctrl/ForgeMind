@@ -178,6 +178,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
     );
 
     switch (event.type) {
+      case "development.received":
+      case "trigger.decided":
+        break;
       case "run.started":
         requirement = event.data.requirement;
         runStartedAt = timestamp(event.ts);
@@ -503,6 +506,8 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "stage.failed":
       return event.data.stage;
     case "run.started":
+    case "development.received":
+    case "trigger.decided":
     case "task.started":
     case "task.completed":
     case "task.failed":
@@ -532,6 +537,9 @@ function normalizeEvent(
 }
 
 function eventDetails(event: ForgeMindEvent): unknown {
+  if (event.type === "development.received" || event.type === "trigger.decided") {
+    return event.data;
+  }
   if (event.type === "tool.called") {
     return {
       args: auditValue(event.data.args),
@@ -574,6 +582,10 @@ function eventDetails(event: ForgeMindEvent): unknown {
 
 function eventSummary(event: ForgeMindEvent): string {
   switch (event.type) {
+    case "development.received":
+      return `Received ${event.data.developmentType} for ${event.data.objectKind} ${event.data.objectId}`;
+    case "trigger.decided":
+      return `${event.data.decision}: ${event.data.reason}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
     case "task.started":

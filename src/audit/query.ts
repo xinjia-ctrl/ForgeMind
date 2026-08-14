@@ -173,6 +173,9 @@ function eventStage(event: ForgeMindEvent): StageId | null {
 }
 
 function approvalActor(event: ForgeMindEvent): string | undefined {
+  if (event.type === "development.received" || event.type === "trigger.decided") {
+    return event.data.actor;
+  }
   return event.type === "approval.requested" ||
     event.type === "approval.approved" ||
     event.type === "approval.rejected"
@@ -199,6 +202,9 @@ function approvalRoleAndRisk(event: ForgeMindEvent): {
 
 function eventRepo(event: ForgeMindEvent): string | undefined {
   switch (event.type) {
+    case "development.received":
+    case "trigger.decided":
+      return event.data.repo;
     case "run.started":
       return event.data.repo;
     case "task.started":
@@ -215,6 +221,10 @@ function operationAndOutcome(event: ForgeMindEvent): {
   readonly outcome?: string;
 } {
   switch (event.type) {
+    case "development.received":
+      return { operation: event.data.developmentType, outcome: "RECEIVED" };
+    case "trigger.decided":
+      return { operation: event.data.ruleId ?? event.data.eventId, outcome: event.data.decision };
     case "tool.called":
       return {
         operation: event.data.tool,

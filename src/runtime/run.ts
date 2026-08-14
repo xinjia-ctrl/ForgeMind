@@ -50,6 +50,9 @@ export interface RunOptions {
   readonly team?: string;
   readonly approvalRisk?: RiskLevel;
   readonly authorizationRepo?: string;
+  readonly toolAllowlist?: readonly string[];
+  readonly commandAllowlist?: readonly (readonly string[])[];
+  readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
 }
 
 export interface RunExecution {
@@ -148,6 +151,11 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
     skipGitHooks: options.skipGitHooks ?? false,
     policyResolver,
     approvalGateway,
+    ...(options.toolAllowlist === undefined ? {} : { toolAllowlist: options.toolAllowlist }),
+    ...(options.commandAllowlist === undefined
+      ? {}
+      : { commandAllowlist: options.commandAllowlist }),
+    ...(options.riskTransform === undefined ? {} : { riskTransform: options.riskTransform }),
     ...(options.actor === undefined
       ? {}
       : {

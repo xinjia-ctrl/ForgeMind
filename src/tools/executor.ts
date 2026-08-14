@@ -34,6 +34,7 @@ interface ScopedExecutorOptions {
   readonly policyResolver: PolicyResolver;
   readonly approvalGateway: ApprovalGateway;
   readonly approvalContext?: ApprovalContext;
+  readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
 }
 
 export class ScopedToolExecutor {
@@ -87,7 +88,11 @@ export class ScopedToolExecutor {
     policy: string,
     policyRisk?: RiskLevel,
   ): Promise<boolean> {
-    const risk = policyRisk ?? this.#options.approvalContext?.risk;
+    const baseRisk = policyRisk ?? this.#options.approvalContext?.risk;
+    const risk =
+      baseRisk === undefined || this.#options.riskTransform === undefined
+        ? baseRisk
+        : this.#options.riskTransform(baseRisk);
     const common = {
       runId: this.#options.runId,
       stage: this.#options.stage,

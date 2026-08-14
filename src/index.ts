@@ -21,6 +21,16 @@ export { actorById, loadActorPolicy, parseActorPolicy } from "./auth/policy-sour
 export { queryAuditEvents } from "./audit/query.js";
 export { exportAuditResult, renderCsv } from "./audit/export.js";
 export { runDagForgeMind } from "./dag/run.js";
+export { parseAgenticConfig } from "./agentic/config.js";
+export { normalizeDevelopmentEvent } from "./agentic/normalize.js";
+export { AgenticTriggerEngine } from "./agentic/trigger.js";
+export { AgenticWatchService, EventLogAgenticAuditSink } from "./agentic/watch.js";
+export {
+  AGENTIC_ACTOR_ID,
+  agenticRunGovernance,
+  createAgenticActor,
+  escalateAgenticRisk,
+} from "./agentic/guardrail.js";
 export type { ChatProvider } from "./llm/chat-provider.js";
 export type { RunResult, TaskContext } from "./core/types.js";
 export type {
@@ -44,3 +54,27 @@ export type {
 } from "./auth/types.js";
 export type { AuditQuery, AuditQueryResult, AuditRecord } from "./audit/query.js";
 export type { AuditExportFormat } from "./audit/export.js";
+export type {
+  AgenticConfig,
+  AgenticGuardrailConfig,
+  AgenticRunRequest,
+  DevelopmentEvent,
+  DevelopmentEventSource,
+  DevelopmentEventType,
+  TriggerDecision,
+  TriggerRule,
+} from "./agentic/types.js";
+export type {
+  AgenticAuditSink,
+  AgenticDispatchReceipt,
+  AgenticRunDispatcher,
+  AgenticWatchOutcome,
+  DevelopmentEventPoller,
+  EventPollResult,
+} from "./agentic/watch.js";
+export type {
+  DevelopmentEventEnvelope,
+  DevelopmentEventNormalizerOptions,
+} from "./agentic/normalize.js";
+export type { AgenticTriggerEngineOptions } from "./agentic/trigger.js";
+export type { AgenticRunGovernance } from "./agentic/guardrail.js";
