@@ -182,7 +182,8 @@ async function walkFiles(root: string, limit: number): Promise<string[]> {
     for (const entry of entries) {
       if (files.length >= limit) break;
       const absolute = path.join(directory, entry.name);
-      if (entry.isDirectory() && !EXCLUDED_DIRECTORIES.has(entry.name)) {
+      if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+      if (entry.isDirectory()) {
         pending.push(absolute);
       } else if (entry.isFile()) {
         files.push(relativeWorkspacePath(root, absolute));

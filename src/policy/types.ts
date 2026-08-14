@@ -1,4 +1,5 @@
 import type { StageId } from "../core/types.js";
+import type { RiskLevel } from "../auth/types.js";
 
 export type PolicyMode = "allow" | "approve" | "deny";
 
@@ -16,11 +17,13 @@ export interface PolicyRule {
     readonly command?: readonly string[];
   };
   readonly mode: PolicyMode;
+  readonly risk?: RiskLevel;
 }
 
 export interface PolicyDecision {
   readonly mode: PolicyMode;
   readonly policy: string;
+  readonly risk?: RiskLevel;
 }
 
 export interface PolicyResolver {

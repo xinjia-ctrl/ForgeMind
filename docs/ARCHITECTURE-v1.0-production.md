@@ -2,7 +2,7 @@
 
 > 迭代：v1.0（第七轮，从演示到生产可用）
 > 前置：v0.5 已实现（记忆/提示词工程 + 兼容性与并发增强，64/64 测试通过）
-> 状态：V1 DAG 内核已实现；V2 多仓库全链路与 V3 Web 工作台规划中（对齐 `docs/PRD-v1.0-production.md`）
+> 状态：V1 DAG 内核、V2 多仓库全链路已实现；V3 Web 工作台规划中（对齐 `docs/PRD-v1.0-production.md`）
 > 技术栈：TypeScript / Node，零运行时第三方依赖（Web 工作台用 Node 原生 http + SSE，不引框架）
 
 ---
@@ -66,7 +66,8 @@ src/
 │   ├── types.ts              # DagTask / DagResult / TaskDependency
 │   ├── plan.ts               # 任务拆解（PM Agent → DagTask[]，复用 PLAN 产物契约）
 │   ├── scheduler.ts          # 调度器（拓扑/并行/失败传播）
-│   └── task-runner.ts        # 节点执行器（封装复用 runForgeMind 单任务能力）
+│   ├── task-runner.ts        # 节点执行器（封装复用 runForgeMind 单任务能力）
+│   └── run.ts                # 多仓库入口（worktree 工厂、父 Run、PR 清单聚合）
 ├── workspace/                # 新增：Web 工作台
 │   ├── server.ts             # Node http 服务器（零依赖）
 │   ├── sse.ts                # SSE 事件广播（订阅 EventLog/运行中事件流）
@@ -196,7 +197,7 @@ src/workspace/
 | 里程碑   | 架构动作                                                                 |
 | -------- | ------------------------------------------------------------------------ |
 | V1       | ✅ `dag/plan.ts` + `dag/scheduler.ts` + 单任务执行适配器 + `task.*` 事件 |
-| V2       | 多仓库执行器（复用 sandbox/test-command/EventLog）+ PR 清单              |
+| V2       | ✅ 多仓库执行器（复用 sandbox/test-command/EventLog）+ PR 清单           |
 | V3       | `workspace/`（server + sse + api + WorkbenchApprovalGateway）            |
 | V4（P1） | 团队策略配置 + CI webhook                                                |
 
@@ -210,5 +211,12 @@ src/workspace/
 
 - `DagPlanner` 对模型拆解结果执行仓库白名单、任务数、字段、依赖、重复 ID 与环检测；支持原生结构化输出。
 - `DagScheduler` 只负责拓扑：就绪任务受控并发、依赖等待、失败隔离、递归 `BLOCKED` 传播；仅全成功时生成 PR 候选清单，不执行 merge。
-- `ForgeMindTaskRunner` 复用 `runForgeMind`，注入 `parentRunId/taskId`，并拒绝任何不同任务复用同一真实工作区。V2 将提供 worktree/快照工厂与 2 仓库 3 任务 e2e。
+- `ForgeMindTaskRunner` 复用 `runForgeMind`，注入 `parentRunId/taskId`，并拒绝任何不同任务复用同一真实工作区。
 - EventLog 支持父子 Run/任务索引，`task.started/completed/failed` 已进入回放、签名、报告投影和 golden 契约。
+
+### V2 实现说明
+
+- `runDagForgeMind` 在创建任何分支前规范化并校验全部仓库；规划结果只能引用真实路径白名单中的仓库。
+- 每个任务通过 Git linked worktree 从源分支基线创建独立 `forgemind/<childRunId>` 分支；工作树根必须位于仓库外，成功或失败后均保留现场，源仓库分支与 HEAD 不变。
+- 子 Run EventLog 写入对应仓库的公共 Git 目录；父 Run EventLog 与 `*.pr-list.json` 写入首仓库的 `forgemind/dag-runs/`。仅所有任务成功时产出 PR 候选清单和 `artifact.produced`，执行器没有 merge 路径。
+- `forge-mind dag run --repos a,b --requirement "..."` 已接入 CLI；2 仓库 3 任务 e2e 验证独立分支、工作树、沙箱、测试、父子事件索引和未合并 PR 清单。

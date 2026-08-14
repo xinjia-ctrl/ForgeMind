@@ -159,6 +159,8 @@ describe("report view model", () => {
         action: { args: { content: "PRIVATE" } },
         policy: "rule:8:approve",
         mode: "approve",
+        actor: "alice",
+        role: "approver",
       }),
       event(2, "approval.approved", {
         runId: "security-run",
@@ -168,6 +170,8 @@ describe("report view model", () => {
         policy: "rule:8:approve",
         mode: "approve",
         decisionSource: "auto",
+        actor: "alice",
+        role: "approver",
       }),
     ]);
 
@@ -179,6 +183,13 @@ describe("report view model", () => {
       ],
     );
     assert.doesNotMatch(JSON.stringify(report.security), /PRIVATE/);
+    assert.deepEqual(
+      report.security.map((item) => [item.actor, item.role]),
+      [
+        ["alice", "approver"],
+        ["alice", "approver"],
+      ],
+    );
   });
 
   it("projects memory, prompt versions, and source-labelled context without content", () => {

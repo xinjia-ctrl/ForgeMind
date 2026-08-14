@@ -74,12 +74,12 @@ function builtInPolicy(testCommand: readonly string[]): PolicyConfigLayer {
     defaultMode: "deny",
     rules: [
       ...SAFE_TOOLS.map((tool): PolicyRule => ({ match: { tool }, mode: "allow" })),
-      { match: { tool: "run_command" }, mode: "approve" },
+      { match: { tool: "run_command" }, mode: "approve", risk: "medium" },
       {
         match: { stage: "TEST", tool: "run_command", command: testCommand },
         mode: "allow",
       },
-      { match: { stage: "COMMIT", tool: "git_commit" }, mode: "approve" },
+      { match: { stage: "COMMIT", tool: "git_commit" }, mode: "approve", risk: "high" },
     ],
     sandbox: {
       mode: "container",
@@ -126,7 +126,7 @@ function policyRules(value: unknown, source: string): readonly PolicyRule[] {
   return value.map((entry, index): PolicyRule => {
     const location = `${source}.rules[${index}]`;
     if (!isObject(entry)) throw new HardFailure(`${location} must be an object`);
-    assertOnlyKeys(entry, ["match", "mode"], location);
+    assertOnlyKeys(entry, ["match", "mode", "risk"], location);
     if (!isObject(entry["match"])) throw new HardFailure(`${location}.match must be an object`);
     const match = entry["match"];
     assertOnlyKeys(match, ["stage", "tool", "command"], `${location}.match`);
@@ -144,6 +144,9 @@ function policyRules(value: unknown, source: string): readonly PolicyRule[] {
         ...(command === undefined ? {} : { command }),
       },
       mode: policyMode(entry["mode"], `${location}.mode`),
+      ...(entry["risk"] === undefined
+        ? {}
+        : { risk: enumeration(entry["risk"], ["low", "medium", "high"], `${location}.risk`) }),
     };
   });
 }

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_TOKEN_BUDGETS } from "../config/budgets.js";
+import { authorize } from "../auth/rbac.js";
+import type { Actor, RiskLevel } from "../auth/types.js";
 import { loadPolicyConfig, type ForgeMindPolicyConfig } from "../config/policy.js";
 import { DefaultAgentFactory } from "../core/agent-factory.js";
 import { createTaskContext } from "../core/context.js";
@@ -21,7 +23,7 @@ import { RulePolicyResolver } from "../policy/resolver.js";
 import { createProcessRunner } from "../sandbox/detect.js";
 import type { ProcessRunner } from "../sandbox/types.js";
 import { createDefaultToolRegistry } from "../tools/index.js";
-import { inspectGitWorkspace, prepareGitWorkspace } from "./git-workspace.js";
+import { inspectGitWorkspace, prepareGitWorkspace, type GitWorkspace } from "./git-workspace.js";
 import { resolveTestCommand } from "./test-command.js";
 
 export interface RunOptions {
@@ -43,6 +45,11 @@ export interface RunOptions {
   readonly memoryProvider?: MemoryProvider;
   readonly parentRunId?: string;
   readonly taskId?: string;
+  readonly preparedWorkspace?: GitWorkspace;
+  readonly actor?: Actor;
+  readonly team?: string;
+  readonly approvalRisk?: RiskLevel;
+  readonly authorizationRepo?: string;
 }
 
 export interface RunExecution {
@@ -71,6 +78,23 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   if (options.parentRunId !== undefined) assertValidRunId(options.parentRunId);
   if (options.taskId !== undefined) assertValidTaskId(options.taskId);
   const inspected = await inspectGitWorkspace(options.repoPath);
+  const authorizationRepo = options.authorizationRepo ?? inspected.root;
+  if (
+    options.actor !== undefined &&
+    !authorize(
+      options.actor,
+      {
+        repo: authorizationRepo,
+        ...(options.team === undefined ? {} : { team: options.team }),
+      },
+      "run",
+    )
+  ) {
+    throw new Error(`Actor ${options.actor.id} is not authorized to run in ${authorizationRepo}`);
+  }
+  if (options.preparedWorkspace !== undefined) {
+    assertPreparedWorkspace(options.preparedWorkspace, inspected, runId);
+  }
   const testCommand = await resolveTestCommand(inspected.root, options.testCommand);
   const policyConfig =
     options.policyConfig ??
@@ -82,9 +106,10 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   const processRunner = options.processRunner ?? (await createProcessRunner(policyConfig.sandbox));
   const approvalGateway = options.approvalGateway ?? approvalGatewayFor(options);
   const policyResolver = new RulePolicyResolver(policyConfig.defaultMode, policyConfig.rules);
-  if (options.memory === true) await excludeProjectMemory(inspected.gitDirectory);
-  const workspace = await prepareGitWorkspace(options.repoPath, runId);
-  const eventsDirectory = path.join(workspace.gitDirectory, "forgemind", "runs");
+  if (options.memory === true) await excludeProjectMemory(inspected.commonGitDirectory);
+  const workspace =
+    options.preparedWorkspace ?? (await prepareGitWorkspace(options.repoPath, runId));
+  const eventsDirectory = path.join(workspace.commonGitDirectory, "forgemind", "runs");
   const eventLog = await EventLog.create(eventsDirectory, runId, {
     ...(options.parentRunId === undefined ? {} : { parentRunId: options.parentRunId }),
     ...(options.taskId === undefined ? {} : { taskId: options.taskId }),
@@ -123,6 +148,18 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
     skipGitHooks: options.skipGitHooks ?? false,
     policyResolver,
     approvalGateway,
+    ...(options.actor === undefined
+      ? {}
+      : {
+          approvalContext: {
+            actor: options.actor,
+            scope: {
+              repo: authorizationRepo,
+              ...(options.team === undefined ? {} : { team: options.team }),
+            },
+            risk: options.approvalRisk ?? "high",
+          },
+        }),
     memory,
   });
   const orchestrator = new Orchestrator({
@@ -130,6 +167,7 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
     agentFactory: factory,
     memory,
     ...(options.maxRework === undefined ? {} : { maxRework: options.maxRework }),
+    ...(options.actor === undefined ? {} : { actor: options.actor }),
   });
   const result = await orchestrator.run(context);
   return { result, eventLogPath: eventLog.filePath };
@@ -165,10 +203,27 @@ function approvalGatewayFor(options: RunOptions): ApprovalGateway {
   return new InteractiveApprovalGateway({ input: process.stdin, output: process.stdout });
 }
 
-function createRunId(): string {
+export function createRunId(): string {
   const timestamp = new Date()
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z");
   return `${timestamp}-${randomUUID().slice(0, 8)}`;
+}
+
+function assertPreparedWorkspace(
+  workspace: GitWorkspace,
+  inspected: Omit<GitWorkspace, "branch">,
+  runId: string,
+): void {
+  const expectedBranch = `forgemind/${runId}`;
+  if (
+    workspace.root !== inspected.root ||
+    workspace.gitDirectory !== inspected.gitDirectory ||
+    workspace.commonGitDirectory !== inspected.commonGitDirectory ||
+    workspace.branch !== inspected.originalBranch ||
+    workspace.branch !== expectedBranch
+  ) {
+    throw new Error(`Prepared workspace does not match run ${runId}`);
+  }
 }

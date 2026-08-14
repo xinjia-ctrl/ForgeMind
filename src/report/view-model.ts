@@ -68,6 +68,9 @@ export interface ReportSecurityEvent {
   readonly policy: string;
   readonly source?: string;
   readonly reason?: string;
+  readonly actor?: string;
+  readonly role?: string;
+  readonly risk?: string;
   readonly details?: unknown;
 }
 
@@ -255,6 +258,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
           mode: event.data.mode,
           decision: "REQUESTED",
           policy: event.data.policy,
+          ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
+          ...(event.data.role === undefined ? {} : { role: event.data.role }),
+          ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
           details: auditValue(event.data.action),
         });
         break;
@@ -268,6 +274,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
           decision: "APPROVED",
           policy: event.data.policy,
           source: event.data.decisionSource,
+          ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
+          ...(event.data.role === undefined ? {} : { role: event.data.role }),
+          ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
           details: auditValue(event.data.action),
         });
         break;
@@ -282,6 +291,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
           policy: event.data.policy,
           source: event.data.decisionSource,
           reason: event.data.reason,
+          ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
+          ...(event.data.role === undefined ? {} : { role: event.data.role }),
+          ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
           details: auditValue(event.data.action),
         });
         break;
@@ -532,7 +544,13 @@ function eventDetails(event: ForgeMindEvent): unknown {
     event.type === "approval.approved" ||
     event.type === "approval.rejected"
   ) {
-    return { action: auditValue(event.data.action), policy: event.data.policy };
+    return {
+      action: auditValue(event.data.action),
+      policy: event.data.policy,
+      ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
+      ...(event.data.role === undefined ? {} : { role: event.data.role }),
+      ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
+    };
   }
   if (event.type === "memory.recalled") {
     return {

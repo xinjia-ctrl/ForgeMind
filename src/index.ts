@@ -16,6 +16,11 @@ export { OpenAICompatibleChatProvider } from "./llm/openai-compatible-provider.j
 export { DagPlanner, parseDagPlan, validateDagTasks } from "./dag/plan.js";
 export { DagScheduler, childRunId } from "./dag/scheduler.js";
 export { ForgeMindTaskRunner } from "./dag/task-runner.js";
+export { authorize, approvalAction } from "./auth/rbac.js";
+export { actorById, loadActorPolicy, parseActorPolicy } from "./auth/policy-source.js";
+export { queryAuditEvents } from "./audit/query.js";
+export { exportAuditResult, renderCsv } from "./audit/export.js";
+export { runDagForgeMind } from "./dag/run.js";
 export type { ChatProvider } from "./llm/chat-provider.js";
 export type { RunResult, TaskContext } from "./core/types.js";
 export type {
@@ -28,3 +33,14 @@ export type {
   TaskRunner,
   TaskStatus,
 } from "./dag/types.js";
+export type { DagRunExecution, DagRunOptions, DagTaskWorkspace } from "./dag/run.js";
+export type {
+  Actor,
+  ApprovalContext,
+  GovernedAction,
+  RiskLevel,
+  Role,
+  Scope,
+} from "./auth/types.js";
+export type { AuditQuery, AuditQueryResult, AuditRecord } from "./audit/query.js";
+export type { AuditExportFormat } from "./audit/export.js";

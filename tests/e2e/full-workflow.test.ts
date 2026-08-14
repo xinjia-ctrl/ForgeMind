@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { it } from "node:test";
 import { EventLog } from "../../src/core/event-log.js";
 import { replay } from "../../src/core/replay.js";
 import { workflowSignature } from "../../src/core/reproducibility.js";
+import { runDagForgeMind } from "../../src/dag/run.js";
 import { FakeChatProvider } from "../../src/llm/fake-provider.js";
 import { runForgeMind } from "../../src/runtime/run.js";
 import { ContainerProcessRunner } from "../../src/sandbox/docker.js";
@@ -236,6 +237,145 @@ it("injects memory from the first run into PLAN and ARCH on the second run", asy
   }
 });
 
+it("runs three isolated tasks across two repositories and produces an unmerged PR list", async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "forgemind-dag-e2e-"));
+  const repositories = await Promise.all([
+    createDemoRepository(path.join(fixtureRoot, "service")),
+    createDemoRepository(path.join(fixtureRoot, "web")),
+  ]);
+  const worktreesRoot = path.join(fixtureRoot, "worktrees");
+  try {
+    const originalBranches = await Promise.all(
+      repositories.map((repository) => git(repository, ["branch", "--show-current"])),
+    );
+    const originalHeads = await Promise.all(
+      repositories.map((repository) => git(repository, ["rev-parse", "HEAD"])),
+    );
+    const planner = new FakeChatProvider([
+      JSON.stringify({
+        summary: "Implement service and web changes, then verify integration",
+        tasks: [
+          {
+            taskId: "service-api",
+            deps: [],
+            repo: repositories[0],
+            requirement: "Implement the service API addition behavior",
+          },
+          {
+            taskId: "web-client",
+            deps: [],
+            repo: repositories[1],
+            requirement: "Implement the web client addition behavior",
+          },
+          {
+            taskId: "integration",
+            deps: ["service-api", "web-client"],
+            repo: repositories[0],
+            requirement: "Verify the integration addition behavior",
+          },
+        ],
+      }),
+    ]);
+
+    const execution = await runDagForgeMind({
+      repositories,
+      requirement: "Ship addition behavior across service and web",
+      provider: planner,
+      providerForTask: () => createDemoProvider(),
+      model: "fake-model",
+      parentRunId: "multi-repo-e2e",
+      maxConcurrency: 2,
+      worktreesRoot,
+      approveAll: true,
+      processRunner: createSandboxRunner(),
+    });
+
+    assert.equal(planner.remainingResponses, 0);
+    assert.equal(
+      execution.result.status,
+      "SUCCEEDED",
+      JSON.stringify(execution.result.tasks, null, 2),
+    );
+    assert.equal(execution.result.tasks.length, 3);
+    assert.equal(execution.result.prList.length, 3);
+    assert.equal(execution.workspaces.length, 3);
+    assert.equal(new Set(execution.workspaces.map((workspace) => workspace.root)).size, 3);
+    assert.ok(execution.prListPath);
+    assert.deepEqual(
+      JSON.parse(await readFile(execution.prListPath, "utf8")),
+      execution.result.prList,
+    );
+
+    for (const [index, repository] of repositories.entries()) {
+      assert.equal(
+        (await git(repository, ["branch", "--show-current"])).stdout.trim(),
+        originalBranches[index]?.stdout.trim(),
+      );
+      assert.equal(
+        (await git(repository, ["rev-parse", "HEAD"])).stdout.trim(),
+        originalHeads[index]?.stdout.trim(),
+      );
+      assert.doesNotMatch(
+        await readFile(path.join(repository, "src/math.js"), "utf8"),
+        /left \+ right/,
+      );
+    }
+
+    const sandboxIds = new Set<string>();
+    for (const task of execution.result.tasks) {
+      assert.equal(task.status, "SUCCEEDED");
+      assert.ok(task.branch);
+      const repository = repositories.find((candidate) => candidate === task.repo);
+      assert.ok(repository);
+      assert.equal(
+        (
+          await git(repository, [
+            "rev-list",
+            "--count",
+            `${originalBranches[repositories.indexOf(repository)]?.stdout.trim()}..${task.branch}`,
+          ])
+        ).stdout.trim(),
+        "1",
+      );
+      const events = await EventLog.open(
+        path.join(repository, ".git", "forgemind", "runs"),
+        task.runId,
+      ).load();
+      const started = events.find((event) => event.type === "run.started");
+      assert.ok(started);
+      assert.equal(started.data.parentRunId, "multi-repo-e2e");
+      assert.equal(started.data.taskId, task.taskId);
+      assert.ok(
+        events.some((event) => event.type === "gate.passed" && event.data.stage === "TEST"),
+      );
+      const toolCalls = events.filter((event) => event.type === "tool.called");
+      const testCall = toolCalls.find((event) => event.data.tool === "run_command");
+      assert.ok(testCall);
+      const toolResult = testCall.data.result as {
+        readonly data?: { readonly sandbox?: { readonly containerId?: string } };
+      };
+      const sandbox = toolResult.data?.sandbox;
+      assert.ok(sandbox?.containerId);
+      sandboxIds.add(sandbox.containerId);
+    }
+    assert.equal(sandboxIds.size, 3);
+
+    const parentEvents = await EventLog.open(
+      path.dirname(execution.eventLogPath),
+      "multi-repo-e2e",
+    ).load();
+    assert.equal(parentEvents.filter((event) => event.type === "task.started").length, 3);
+    assert.equal(parentEvents.filter((event) => event.type === "task.completed").length, 3);
+    assert.ok(
+      parentEvents.some(
+        (event) => event.type === "artifact.produced" && event.data.kind === "pr-candidate-list",
+      ),
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 function createDemoProvider(): FakeChatProvider {
   return new FakeChatProvider([
     JSON.stringify({
@@ -289,9 +429,9 @@ function createDemoProvider(): FakeChatProvider {
   ]);
 }
 
-async function createDemoRepository(): Promise<string> {
-  const repo = await mkdtemp(path.join(os.tmpdir(), "forgemind-e2e-"));
-  await mkdir(path.join(repo, "src"));
+async function createDemoRepository(explicitPath?: string): Promise<string> {
+  const repo = explicitPath ?? (await mkdtemp(path.join(os.tmpdir(), "forgemind-e2e-")));
+  await mkdir(path.join(repo, "src"), { recursive: true });
   await writeFile(
     path.join(repo, "package.json"),
     `${JSON.stringify({ name: "demo", private: true, type: "module", scripts: { test: "node --test" } }, null, 2)}\n`,
@@ -323,7 +463,7 @@ async function createDemoRepository(): Promise<string> {
   await git(repo, ["config", "user.email", "forgemind@example.invalid"]);
   await git(repo, ["add", "."]);
   await git(repo, ["commit", "-m", "chore: initial fixture"]);
-  return repo;
+  return await realpath(repo);
 }
 
 async function git(cwd: string, args: readonly string[]) {

@@ -37,6 +37,51 @@ node dist/src/runtime/cli.js run \
 
 The target repository must be clean. ForgeMind creates a new branch and never performs a merge. In particular, it never merges `test` into a development branch. Failed runs retain their branch and changes for audit and recovery.
 
+For a requirement spanning multiple repositories, use the DAG runner:
+
+```bash
+node dist/src/runtime/cli.js dag run \
+  --repos /absolute/path/to/service,/absolute/path/to/web \
+  --requirement "Add a feature across the service and web client" \
+  --max-concurrency 4 \
+  --yes
+```
+
+The planning agent binds each DAG task to an allowlisted repository. Every task runs in a separate Git linked worktree, branch, sandbox, test gate, and child EventLog. Source repositories are not switched or modified. Worktrees are retained for audit; their default root is the operating system temporary directory and can be made durable with `--worktrees-root <path>`. A PR-candidate JSON artifact is produced only when all tasks succeed. ForgeMind never merges those branches.
+
+## Enterprise RBAC and audit export
+
+RBAC is opt-in for backward compatibility and deny-by-default once an actor is supplied. A strict actor policy maps identities to roles and repository/team scopes:
+
+```json
+{
+  "actors": [
+    {
+      "id": "alice",
+      "role": "approver",
+      "repos": ["/absolute/path/to/target-repo"],
+      "teams": ["platform"]
+    }
+  ]
+}
+```
+
+Pass `--actor-policy /path/to/actors.json --actor alice` to `run` or `dag run`. ForgeMind checks Run permission before creating a branch or worktree. Approval policy rules may declare `risk` as `low`, `medium`, or `high`; medium risk requires a developer and high risk requires an approver. Actor, role, and risk are recorded on approval events and reports.
+
+Export a bounded, read-only audit projection from EventLog JSONL files:
+
+```bash
+node dist/src/runtime/cli.js audit export \
+  --repo /absolute/path/to/target-repo \
+  --from 2026-08-01T00:00:00Z \
+  --to 2026-08-13T23:59:59Z \
+  --actor-policy /path/to/actors.json \
+  --actor alice \
+  --format csv
+```
+
+Audit queries require an explicit window of at most 31 days and support `--filter-actor`, `--filter-repo`, and `--status`. Exports are written under the repository's Git metadata in `forgemind/audit/`; JSON and formula-injection-safe CSV are generated from the same projection.
+
 The test command is auto-detected from `package.json`; it can be set explicitly to an allowlisted, shell-free test invocation:
 
 ```bash

@@ -38,6 +38,53 @@ describe("CLI validation", () => {
       1,
     );
   });
+
+  it("parses and validates the nested dag run command before reading credentials", async () => {
+    assert.equal(
+      await withMutedStderr(() =>
+        main(["dag", "run", "--repos", ".", "--requirement", "x", "--max-concurrency", "0"]),
+      ),
+      1,
+    );
+  });
+
+  it("rejects unknown dag run options", async () => {
+    assert.equal(
+      await withMutedStderr(() =>
+        main(["dag", "run", "--repos", ".", "--requirement", "x", "--merge", "true"]),
+      ),
+      1,
+    );
+  });
+
+  it("validates nested audit export options without credentials", async () => {
+    assert.equal(
+      await withMutedStderr(() =>
+        main([
+          "audit",
+          "export",
+          "--repo",
+          ".",
+          "--from",
+          "2025-01-01T00:00:00Z",
+          "--to",
+          "2025-01-02T00:00:00Z",
+          "--format",
+          "xml",
+        ]),
+      ),
+      1,
+    );
+  });
+
+  it("requires actor id and policy to be provided together", async () => {
+    assert.equal(
+      await withMutedStderr(() =>
+        main(["run", "--repo", ".", "--requirement", "x", "--actor", "alice"]),
+      ),
+      1,
+    );
+  });
 });
 
 async function withMutedStderr(action: () => Promise<number>): Promise<number> {

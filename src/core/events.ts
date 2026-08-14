@@ -1,4 +1,11 @@
+import type { RiskLevel, Role } from "../auth/types.js";
 import type { RunStatus, StageId, StageStatus } from "./types.js";
+
+interface ActorIndex {
+  readonly actor?: string;
+  readonly role?: Role;
+  readonly risk?: RiskLevel;
+}
 
 interface EventIndex {
   readonly taskId?: string;
@@ -9,7 +16,9 @@ interface EventPayloadMap {
     readonly runId: string;
     readonly requirement: string;
     readonly branch: string;
+    readonly repo?: string;
     readonly parentRunId?: string;
+    readonly actor?: string;
   };
   readonly "task.started": {
     readonly runId: string;
@@ -93,7 +102,7 @@ interface EventPayloadMap {
     readonly action: unknown;
     readonly policy: string;
     readonly mode: "approve";
-  };
+  } & ActorIndex;
   readonly "approval.approved": {
     readonly runId: string;
     readonly stage: StageId;
@@ -102,7 +111,7 @@ interface EventPayloadMap {
     readonly policy: string;
     readonly mode: "approve";
     readonly decisionSource: "interactive" | "auto" | "config";
-  };
+  } & ActorIndex;
   readonly "approval.rejected": {
     readonly runId: string;
     readonly stage: StageId;
@@ -112,7 +121,7 @@ interface EventPayloadMap {
     readonly mode: "approve" | "deny";
     readonly reason: string;
     readonly decisionSource: "interactive" | "auto" | "disabled" | "policy";
-  };
+  } & ActorIndex;
   readonly "artifact.produced": {
     readonly runId: string;
     readonly stage: StageId;

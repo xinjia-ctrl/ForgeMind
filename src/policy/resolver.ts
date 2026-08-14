@@ -34,6 +34,7 @@ export class RulePolicyResolver implements PolicyResolver {
     return {
       mode: selected.rule.mode,
       policy: `rule:${selected.index}:${selected.rule.mode}`,
+      ...(selected.rule.risk === undefined ? {} : { risk: selected.rule.risk }),
     };
   }
 }

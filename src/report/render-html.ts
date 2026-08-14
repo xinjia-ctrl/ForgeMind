@@ -229,9 +229,15 @@ function renderGate(gate: ReportGate): string {
 }
 
 function renderSecurityEvent(event: ReportSecurityEvent): string {
-  const meta = [event.policy, event.source, event.reason].filter(
-    (value): value is string => value !== undefined && value.length > 0,
-  );
+  const meta = [
+    event.actor === undefined
+      ? undefined
+      : `${event.actor}${event.role === undefined ? "" : ` (${event.role})`}`,
+    event.policy,
+    event.risk === undefined ? undefined : `${event.risk} risk`,
+    event.source,
+    event.reason,
+  ].filter((value): value is string => value !== undefined && value.length > 0);
   const details =
     event.details === undefined
       ? ""

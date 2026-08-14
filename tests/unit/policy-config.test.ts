@@ -11,7 +11,7 @@ describe("policy configuration", () => {
     const config = mergePolicyLayers([
       {
         defaultMode: "deny",
-        rules: [{ match: { tool: "git_commit" }, mode: "approve" }],
+        rules: [{ match: { tool: "git_commit" }, mode: "approve", risk: "high" }],
         sandbox: {
           mode: "container",
           image: `node@sha256:${"a".repeat(64)}`,
@@ -26,6 +26,7 @@ describe("policy configuration", () => {
 
     assert.equal(config.defaultMode, "deny");
     assert.equal(config.rules.length, 2);
+    assert.equal(config.rules[0]?.risk, "high");
     assert.equal(config.sandbox.memoryMb, 768);
     assert.equal(config.sandbox.image, `node@sha256:${"a".repeat(64)}`);
   });

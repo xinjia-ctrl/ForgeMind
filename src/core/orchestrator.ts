@@ -10,6 +10,7 @@ interface OrchestratorOptions {
   readonly agentFactory: AgentFactory;
   readonly memory: MemoryProvider;
   readonly maxRework?: number;
+  readonly actor?: { readonly id: string };
 }
 
 export class Orchestrator {
@@ -17,12 +18,14 @@ export class Orchestrator {
   readonly #agentFactory: AgentFactory;
   readonly #memory: MemoryProvider;
   readonly #maxRework: number;
+  readonly #actor: { readonly id: string } | undefined;
 
   public constructor(options: OrchestratorOptions) {
     this.#eventLog = options.eventLog;
     this.#agentFactory = options.agentFactory;
     this.#memory = options.memory;
     this.#maxRework = options.maxRework ?? 3;
+    this.#actor = options.actor;
     if (!Number.isInteger(this.#maxRework) || this.#maxRework < 0) {
       throw new FatalFailure("maxRework must be a non-negative integer");
     }
@@ -36,6 +39,8 @@ export class Orchestrator {
         runId: ctx.runId,
         requirement: ctx.requirement,
         branch: ctx.repo.branch,
+        repo: ctx.repo.path,
+        ...(this.#actor === undefined ? {} : { actor: this.#actor.id }),
       },
     });
 
