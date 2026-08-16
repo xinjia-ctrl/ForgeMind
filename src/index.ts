@@ -25,6 +25,13 @@ export { parseAgenticConfig } from "./agentic/config.js";
 export { normalizeDevelopmentEvent } from "./agentic/normalize.js";
 export { AgenticTriggerEngine } from "./agentic/trigger.js";
 export { AgenticWatchService, EventLogAgenticAuditSink } from "./agentic/watch.js";
+export { ChatNegotiationTurnProvider, NegotiationProtocol } from "./negotiation/protocol.js";
+export {
+  detectArchitectureConflict,
+  detectArtifactMismatch,
+  detectRepeatedReviewRejection,
+} from "./negotiation/triggers.js";
+export { createDecisionRecord, persistDecisionRecord } from "./negotiation/record.js";
 export {
   AGENTIC_ACTOR_ID,
   agenticRunGovernance,
@@ -78,3 +85,20 @@ export type {
 } from "./agentic/normalize.js";
 export type { AgenticTriggerEngineOptions } from "./agentic/trigger.js";
 export type { AgenticRunGovernance } from "./agentic/guardrail.js";
+export type {
+  DecisionRecord,
+  Negotiation,
+  NegotiationArtifact,
+  NegotiationCoordinator,
+  NegotiationEvidence,
+  NegotiationRequest,
+  NegotiationRound,
+  NegotiationTrigger,
+} from "./negotiation/types.js";
+export type {
+  ChatNegotiationTurnProviderOptions,
+  NegotiationProtocolOptions,
+  NegotiationTurnInput,
+  NegotiationTurnProvider,
+  NegotiationTurnResult,
+} from "./negotiation/protocol.js";

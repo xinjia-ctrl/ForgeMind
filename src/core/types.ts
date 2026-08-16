@@ -31,10 +31,16 @@ export interface ArchitectureFile {
   readonly purpose: string;
 }
 
+export interface ArchitectureAlternative {
+  readonly position: string;
+  readonly tradeoffs: readonly string[];
+}
+
 export interface ArchDecision {
   readonly decisions: readonly string[];
   readonly files: readonly ArchitectureFile[];
   readonly risks: readonly string[];
+  readonly alternatives?: readonly ArchitectureAlternative[];
   readonly summary: string;
 }
 

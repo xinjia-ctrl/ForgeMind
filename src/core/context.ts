@@ -59,6 +59,16 @@ export function withArchitecture(
   });
 }
 
+export function withUpdatedArchitecture(ctx: TaskContext, architecture: ArchDecision): TaskContext {
+  return freezeContext({
+    ...ctx,
+    architecture,
+    artifacts: ctx.artifacts.map((artifact) =>
+      artifact.stage === "ARCH" ? { ...artifact, summary: architecture.summary } : artifact,
+    ),
+  });
+}
+
 export function withArtifacts(ctx: TaskContext, artifacts: readonly ArtifactRef[]): TaskContext {
   return freezeContext({
     ...ctx,

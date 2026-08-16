@@ -26,5 +26,11 @@ describe("prompt governance", () => {
     const provider = new FakeChatProvider([], { supportsStructuredOutput: true });
     assert.equal(supportsStructuredOutput(provider, {}), true);
     assert.equal(supportsStructuredOutput(provider, { FORGEMIND_STRUCTURED_OUTPUT: "0" }), false);
+    const architectureSchema = structuredOutputFor("ARCH").jsonSchema as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    assert.ok("alternatives" in architectureSchema.properties);
+    assert.equal(architectureSchema.required.includes("alternatives"), true);
   });
 });

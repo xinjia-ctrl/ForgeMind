@@ -4,6 +4,7 @@ import path from "node:path";
 import { HardFailure } from "../core/errors.js";
 import type { EventLog } from "../core/event-log.js";
 import type { ArtifactRef, GateResult, StageId, TaskContext } from "../core/types.js";
+import type { DecisionRecord } from "../negotiation/types.js";
 import { keywords } from "./keywords.js";
 import type { MemoryProvider, RecallOptions, Retrieval } from "./memory-provider.js";
 
@@ -65,6 +66,21 @@ export class ProjectMemory implements MemoryProvider {
       ["gate", "rejected", gate.stage],
     );
     await this.store("lessons.json", [entry], ctx.runId);
+  }
+
+  public async rememberDecisionRecord(record: DecisionRecord): Promise<void> {
+    if (!this.#writeEnabled) return;
+    const positions = record.positions
+      .map((position) => `${position.side}: ${position.position}`)
+      .join(" | ");
+    const entry = memoryEntry(
+      "decision",
+      `Negotiation ${record.topic}: ${record.decision}. Positions: ${positions}`,
+      record.runId,
+      stageForDecision(record),
+      ["negotiation", record.trigger, record.topic],
+    );
+    await this.store("decisions.json", [entry], record.runId);
   }
 
   public async recall(query: string, options: RecallOptions = {}): Promise<readonly Retrieval[]> {
@@ -207,4 +223,15 @@ function isStage(value: unknown): value is StageId {
     value === "TEST" ||
     value === "COMMIT"
   );
+}
+
+function stageForDecision(record: DecisionRecord): StageId {
+  switch (record.trigger) {
+    case "arch-conflict":
+      return "ARCH";
+    case "review-repeated-rejection":
+      return "REVIEW";
+    case "artifact-mismatch":
+      return "CODE";
+  }
 }

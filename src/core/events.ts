@@ -35,6 +35,32 @@ interface EventPayloadMap {
     readonly requestId?: string;
     readonly retryAt?: string;
   };
+  readonly "negotiation.started": {
+    readonly runId: string;
+    readonly negotiationId: string;
+    readonly trigger: "arch-conflict" | "review-repeated-rejection" | "artifact-mismatch";
+    readonly topic: string;
+  };
+  readonly "negotiation.round": {
+    readonly runId: string;
+    readonly negotiationId: string;
+    readonly round: 1 | 2 | 3;
+    readonly status: "CONTINUE" | "CONVERGED";
+    readonly proposal: unknown;
+    readonly counter: unknown;
+  };
+  readonly "negotiation.resolved": {
+    readonly runId: string;
+    readonly negotiationId: string;
+    readonly decisionRecordId: string;
+    readonly decision: unknown;
+  };
+  readonly "negotiation.escalated": {
+    readonly runId: string;
+    readonly negotiationId: string;
+    readonly reason: "no-consensus" | "timeout";
+    readonly approved: boolean;
+  };
   readonly "run.started": {
     readonly runId: string;
     readonly requirement: string;
@@ -81,6 +107,8 @@ interface EventPayloadMap {
     readonly promptFingerprint: string;
     readonly promptVersion?: string;
     readonly structuredOutput?: boolean;
+    readonly negotiationId?: string;
+    readonly negotiationSide?: "proposal" | "counter";
   };
   readonly "memory.recalled": {
     readonly runId: string;

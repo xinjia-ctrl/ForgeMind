@@ -130,6 +130,35 @@ it("keeps the versioned event and replay contract stable", async () => {
       },
     });
     await log.append({
+      type: "negotiation.started",
+      data: {
+        runId: "golden-run",
+        negotiationId: "negotiation-golden",
+        trigger: "arch-conflict",
+        topic: "Choose the replay boundary",
+      },
+    });
+    await log.append({
+      type: "negotiation.round",
+      data: {
+        runId: "golden-run",
+        negotiationId: "negotiation-golden",
+        round: 1,
+        status: "CONVERGED",
+        proposal: "<redacted:20 bytes>",
+        counter: "<redacted:18 bytes>",
+      },
+    });
+    await log.append({
+      type: "negotiation.resolved",
+      data: {
+        runId: "golden-run",
+        negotiationId: "negotiation-golden",
+        decisionRecordId: "decision-golden",
+        decision: "<redacted:20 bytes>",
+      },
+    });
+    await log.append({
       type: "run.finished",
       data: { runId: "golden-run", status: "FAILED", summary: "Planning failed" },
     });
@@ -140,7 +169,7 @@ it("keeps the versioned event and replay contract stable", async () => {
     const rawEvents = await log.load();
     assert.deepEqual(
       rawEvents.map((event) => event.seq),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -54,6 +54,14 @@ function describe(event: ForgeMindEvent): string {
       return `Received ${event.data.developmentType} for ${event.data.objectKind} ${event.data.objectId}`;
     case "trigger.decided":
       return `${event.data.decision}: ${event.data.reason}`;
+    case "negotiation.started":
+      return `Negotiation started for ${event.data.trigger}: ${event.data.topic}`;
+    case "negotiation.round":
+      return `Negotiation round ${event.data.round}: ${event.data.status}`;
+    case "negotiation.resolved":
+      return `Negotiation resolved as ${event.data.decisionRecordId}`;
+    case "negotiation.escalated":
+      return `Negotiation ${event.data.reason}: ${event.data.approved ? "approved" : "denied"}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
     case "task.started":

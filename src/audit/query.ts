@@ -225,6 +225,17 @@ function operationAndOutcome(event: ForgeMindEvent): {
       return { operation: event.data.developmentType, outcome: "RECEIVED" };
     case "trigger.decided":
       return { operation: event.data.ruleId ?? event.data.eventId, outcome: event.data.decision };
+    case "negotiation.started":
+      return { operation: event.data.trigger, outcome: "STARTED" };
+    case "negotiation.round":
+      return { operation: event.data.negotiationId, outcome: event.data.status };
+    case "negotiation.resolved":
+      return { operation: event.data.negotiationId, outcome: "RESOLVED" };
+    case "negotiation.escalated":
+      return {
+        operation: event.data.negotiationId,
+        outcome: event.data.approved ? "APPROVED" : "DENIED",
+      };
     case "tool.called":
       return {
         operation: event.data.tool,

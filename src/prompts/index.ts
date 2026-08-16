@@ -34,7 +34,7 @@ const SCHEMAS: Readonly<Record<StageId, Readonly<Record<string, unknown>>>> = {
     acceptanceCriteria: { type: "array", items: { type: "string" } },
     summary: { type: "string" },
   }),
-  ARCH: objectSchema(["decisions", "files", "risks", "summary"], {
+  ARCH: objectSchema(["decisions", "files", "risks", "alternatives", "summary"], {
     decisions: { type: "array", items: { type: "string" } },
     files: {
       type: "array",
@@ -44,6 +44,13 @@ const SCHEMAS: Readonly<Record<StageId, Readonly<Record<string, unknown>>>> = {
       }),
     },
     risks: { type: "array", items: { type: "string" } },
+    alternatives: {
+      type: "array",
+      items: objectSchema(["position", "tradeoffs"], {
+        position: { type: "string" },
+        tradeoffs: { type: "array", minItems: 1, items: { type: "string" } },
+      }),
+    },
     summary: { type: "string" },
   }),
   CODE: objectSchema(["summary", "operations"], {

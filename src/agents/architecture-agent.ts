@@ -35,6 +35,14 @@ export class ArchitectureAgent extends BaseAgent {
         purpose: requiredString(file, "purpose"),
       })),
       risks: stringArray(response, "risks"),
+      ...(response["alternatives"] === undefined
+        ? {}
+        : {
+            alternatives: objectArray(response, "alternatives").map((alternative) => ({
+              position: requiredString(alternative, "position"),
+              tradeoffs: stringArray(alternative, "tradeoffs"),
+            })),
+          }),
       summary: requiredString(response, "summary"),
     };
     const artifact: ArtifactRef = {
@@ -55,5 +63,14 @@ function renderArchitecture(architecture: ArchDecision): string {
   const decisions = architecture.decisions.map((item) => `- ${item}`).join("\n");
   const files = architecture.files.map((file) => `- \`${file.path}\`: ${file.purpose}`).join("\n");
   const risks = architecture.risks.map((item) => `- ${item}`).join("\n");
-  return `# Architecture Decision\n\n## Decisions\n\n${decisions}\n\n## Files\n\n${files}\n\n## Risks\n\n${risks}\n\n## Summary\n\n${architecture.summary}\n`;
+  const alternatives =
+    architecture.alternatives === undefined || architecture.alternatives.length === 0
+      ? ""
+      : `\n\n## Alternatives\n\n${architecture.alternatives
+          .map(
+            (alternative) =>
+              `- ${alternative.position}\n  - Tradeoffs: ${alternative.tradeoffs.join("; ")}`,
+          )
+          .join("\n")}`;
+  return `# Architecture Decision\n\n## Decisions\n\n${decisions}\n\n## Files\n\n${files}\n\n## Risks\n\n${risks}${alternatives}\n\n## Summary\n\n${architecture.summary}\n`;
 }

@@ -1,8 +1,25 @@
 import { classifyFailure, errorMessage, FatalFailure } from "./errors.js";
 import type { AgentFactory } from "./agent-factory.js";
-import { withArchitecture, withArtifacts, withAttempt, withGate, withPlan } from "./context.js";
+import {
+  withArchitecture,
+  withArtifacts,
+  withAttempt,
+  withGate,
+  withPlan,
+  withUpdatedArchitecture,
+} from "./context.js";
 import type { EventLog } from "./event-log.js";
 import type { MemoryProvider } from "../memory/memory-provider.js";
+import { persistDecisionRecord } from "../negotiation/record.js";
+import {
+  detectArchitectureConflict,
+  detectRepeatedReviewRejection,
+} from "../negotiation/triggers.js";
+import type {
+  DecisionRecord,
+  NegotiationCoordinator,
+  NegotiationEvidence,
+} from "../negotiation/types.js";
 import type { ArtifactRef, RunResult, RunStatus, StageId, TaskContext } from "./types.js";
 
 interface OrchestratorOptions {
@@ -11,6 +28,8 @@ interface OrchestratorOptions {
   readonly memory: MemoryProvider;
   readonly maxRework?: number;
   readonly actor?: { readonly id: string };
+  readonly negotiation?: NegotiationCoordinator;
+  readonly reviewNegotiationThreshold?: number;
 }
 
 export class Orchestrator {
@@ -19,6 +38,8 @@ export class Orchestrator {
   readonly #memory: MemoryProvider;
   readonly #maxRework: number;
   readonly #actor: { readonly id: string } | undefined;
+  readonly #negotiation: NegotiationCoordinator | undefined;
+  readonly #reviewNegotiationThreshold: number;
 
   public constructor(options: OrchestratorOptions) {
     this.#eventLog = options.eventLog;
@@ -26,8 +47,16 @@ export class Orchestrator {
     this.#memory = options.memory;
     this.#maxRework = options.maxRework ?? 3;
     this.#actor = options.actor;
+    this.#negotiation = options.negotiation;
+    this.#reviewNegotiationThreshold = options.reviewNegotiationThreshold ?? 2;
     if (!Number.isInteger(this.#maxRework) || this.#maxRework < 0) {
       throw new FatalFailure("maxRework must be a non-negative integer");
+    }
+    if (
+      !Number.isInteger(this.#reviewNegotiationThreshold) ||
+      this.#reviewNegotiationThreshold < 2
+    ) {
+      throw new FatalFailure("reviewNegotiationThreshold must be an integer of at least 2");
     }
   }
 
@@ -57,9 +86,18 @@ export class Orchestrator {
         throw new FatalFailure("ARCH returned wrong output kind");
       }
       ctx = withArchitecture(ctx, architectureOutput.architecture, architectureOutput.artifact);
+      const architectureConflict = detectArchitectureConflict(architectureOutput.architecture);
+      if (architectureConflict !== null && this.#negotiation !== undefined) {
+        const record = await this.negotiate(ctx, architectureConflict);
+        if (record === null) {
+          return await this.finish(ctx, "FAILED", "Architecture negotiation was not approved");
+        }
+        ctx = withUpdatedArchitecture(ctx, applyArchitectureDecision(ctx, record));
+      }
       await this.remember(ctx, [architectureOutput.artifact]);
 
       let feedback: string | undefined;
+      let reviewNegotiated = false;
       for (let attempt = 1; attempt <= this.#maxRework + 1; attempt += 1) {
         ctx = withAttempt(ctx, "CODE", attempt);
         const codeOutput = await this.executeStage("CODE", attempt, ctx, feedback);
@@ -84,7 +122,20 @@ export class Orchestrator {
               `Review gate remained rejected after ${attempt} attempts`,
             );
           }
-          feedback = reworkEvidence(reviewOutput.gate);
+          const repeatedRejection = detectRepeatedReviewRejection(
+            ctx,
+            this.#reviewNegotiationThreshold,
+          );
+          if (repeatedRejection !== null && this.#negotiation !== undefined && !reviewNegotiated) {
+            reviewNegotiated = true;
+            const record = await this.negotiate(ctx, repeatedRejection);
+            if (record === null) {
+              return await this.finish(ctx, "FAILED", "Review negotiation was not approved");
+            }
+            feedback = `${reworkEvidence(reviewOutput.gate)}\nNegotiated decision: ${record.decision}`;
+          } else {
+            feedback = reworkEvidence(reviewOutput.gate);
+          }
           continue;
         }
 
@@ -132,6 +183,21 @@ export class Orchestrator {
     for (const artifact of artifacts) await this.#memory.remember(ctx, artifact);
   }
 
+  private async negotiate(
+    ctx: TaskContext,
+    evidence: NegotiationEvidence,
+  ): Promise<DecisionRecord | null> {
+    if (this.#negotiation === undefined) return null;
+    const negotiation = await this.#negotiation.negotiate({
+      runId: ctx.runId,
+      ...evidence,
+    });
+    if (negotiation.decisionRecord !== null) {
+      await persistDecisionRecord(this.#memory, negotiation.decisionRecord);
+    }
+    return negotiation.decisionRecord;
+  }
+
   private async finish(ctx: TaskContext, status: RunStatus, summary: string): Promise<RunResult> {
     await this.#eventLog.append({
       type: "run.finished",
@@ -139,6 +205,15 @@ export class Orchestrator {
     });
     return { status, context: ctx, summary };
   }
+}
+
+function applyArchitectureDecision(ctx: TaskContext, record: DecisionRecord) {
+  if (ctx.architecture === null) throw new FatalFailure("Architecture decision is missing");
+  return {
+    ...ctx.architecture,
+    decisions: [...ctx.architecture.decisions, `Negotiated: ${record.decision}`],
+    summary: `${ctx.architecture.summary} Negotiated decision: ${record.decision}`,
+  };
 }
 
 function reworkEvidence(gate: {

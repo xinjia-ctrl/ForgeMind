@@ -26,6 +26,30 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
             operation: event.data.ruleId ?? event.data.eventId,
             outcome: event.data.decision,
           };
+        case "negotiation.started":
+          return {
+            type: event.type,
+            operation: event.data.trigger,
+            outcome: "started",
+          };
+        case "negotiation.round":
+          return {
+            type: event.type,
+            operation: event.data.negotiationId,
+            outcome: event.data.status,
+          };
+        case "negotiation.resolved":
+          return {
+            type: event.type,
+            operation: event.data.negotiationId,
+            outcome: "resolved",
+          };
+        case "negotiation.escalated":
+          return {
+            type: event.type,
+            operation: event.data.negotiationId,
+            outcome: event.data.approved ? "approved" : "denied",
+          };
         case "run.started":
           return { type: event.type };
         case "task.started":

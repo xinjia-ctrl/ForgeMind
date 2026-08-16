@@ -1,13 +1,14 @@
 # ForgeMind 产品需求文档（PRD）
 
-> 版本：v0.5（记忆、上下文与提示词工程，已对齐实现）
-> 状态：v0.5 已实现（完整测试套件通过；提示词评测 4/4 场景通过）
+> 版本：v3.0（主动监测已实现，全能力对齐代码）
+> 状态：v3.0 已实现（103/103 测试通过）
+> 演进总览：v0.2 闭环 → v0.3 可观测 → v0.4 安全 → v0.5 记忆/提示词 → v1.0 DAG/多仓库 → v2.0 企业集成/RBAC/审计 → v3.0 主动监测
 
 ## 1. 产品定位
 
 ForgeMind 是一个生产级 Multi-Agent Coding Agent 系统，通过多个 AI Agent 协作实现软件研发全流程闭环：需求分析 → 产品设计 → 架构设计 → 代码开发 → 代码审查 → 测试验证 → Git 提交。
 
-产品定位是打造类似 Devin、Claude Code 的 AI 软件研发平台，当前阶段以完整闭环 Demo 为优先目标，同时架构上具备演进到生产级的能力。
+产品定位是打造类似 Devin、Claude Code 的 AI 软件研发平台。当前已具备：单任务闭环、可观测报告、沙箱与审批、四层记忆、DAG 并发编排、企业审计与主动事件监测，架构上持续向"研发操作系统"演进（对齐 `docs/VISION.md`）。
 
 ## 2. 目标用户与场景
 
@@ -16,6 +17,9 @@ ForgeMind 是一个生产级 Multi-Agent Coding Agent 系统，通过多个 AI A
 | 面试展示     | 候选人   | 一条自然语言需求，演示多 Agent 协作产出可运行代码、测试通过并完成 Git 提交；过程可审计、可回放 |
 | 个人研发提效 | 开发者   | 将"需求 → 提交"的重复劳动交给系统，人只做关键决策与最终验收                                    |
 | 团队协作     | 研发团队 | 需求标准化、过程可追溯、质量有保障（代码审查 + 测试验证作为强制环节）                          |
+| 跨仓库研发   | 研发团队 | 一个需求拆解为多任务并行，跨仓库协作（`dag run`）                                              |
+| 无人值守研发 | 团队     | 监听 issue/CI 失败自动触发研发闭环（Agentic）                                                  |
+| 企业治理     | 管理员   | RBAC 权限 + 全量审计导出 + 配额管控                                                            |
 
 ## 3. MVP 范围与核心能力
 
@@ -33,13 +37,17 @@ MVP 只做一件事并做通：**一个自然语言需求，经多 Agent 协作�
 8. **生产安全**：动作级三态策略、审批网关和容器沙箱构成纵深防御，全部决策可审计。
 9. **可选项目记忆**：用户显式启用后检索历史 Run，并确定性沉淀架构决策与失败教训。
 10. **提示词与上下文治理**：版本化五段式提示词、原生结构化输出、相关性检索和上下文审计。
+11. **DAG 并发编排**：一个需求拆解为多任务 DAG，跨仓库并行执行（`dag run`）。
+12. **RBAC 权限治理**：角色化权限 + 策略分级，deny-by-default。
+13. **企业审计导出**：按时间/角色/仓库检索并导出全部 Run 与审批决策。
+14. **主动事件监测**：监听 issue/CI/PR 事件，按规则自动触发研发闭环，三层护栏防失控。
 
 ## 4. 非目标（MVP 明确不做）
 
 - 不做跨项目全局记忆与向量语义检索；当前只做用户显式启用的项目级 L2/L3 记忆。
 - 不做需要常驻服务的实时 Web 仪表盘（静态离线报告已实现，实时视图延后）。
-- 不做并行任务调度与多项目并发管理。
 - 不做模型能力横向比拼，只保证链路可用。
+- 不做多 Agent 自由协商（主动监测是规则驱动的有界判定，非自由对话）。
 
 ## 5. MVP 演示验收标准（DoD）
 
@@ -60,40 +68,48 @@ MVP 只做一件事并做通：**一个自然语言需求，经多 Agent 协作�
 - [x] 提示词资源可版本化，`llm.called` 记录版本并优先使用原生 JSON Schema；
 - [x] CODE 上下文按架构文件、grep 命中和关键词相关性装配，报告展示来源与 token；
 - [x] `npm run eval` 对 4 条代表性需求输出确定性 A/B 指标。
+- [x] 跨仓库需求拆解为 DAG 任务并行执行，依赖按序等待，各自过门禁；
+- [x] RBAC 角色生效，未授权动作拒绝且入审计；
+- [x] `audit export` 按窗口导出审计数据（JSON/CSV）；
+- [x] 主动监测：事件经去重/配额/冷却判定后触发，`development.received` / `trigger.decided` 全量落盘。
 
-> **实现状态说明（v0.5）**：原有闭环、安全与门禁语义保持不变。记忆默认关闭，只有 `--memory` 或 API 注入 Provider 时启用；项目记忆通过 Git 本地 exclude 不进入生成的 commit。结构化输出在 Provider 接缝处能力探测，400 后关闭能力位且不重试 LLM。实际模型协议与 Docker/Podman 跨平台运行仍需发布环境 smoke test。
+> **实现状态说明（v3.0）**：原有闭环、安全、记忆与门禁语义保持不变。记忆默认关闭，只有 `--memory` 或 API 注入 Provider 时启用；项目记忆通过 Git 本地 exclude 不进入生成的 commit。结构化输出在 Provider 接缝处能力探测。主动监测为库 API（`AgenticWatchService`），需接入事件源与调度器。Docker/Podman 跨平台运行仍需发布环境 smoke test。
 
-## 6. 核心能力与实现对照（v0.5）
+## 6. 核心能力与实现对照（v3.0）
 
-| PRD 能力                         | 实现落点                                                     | 状态     |
-| -------------------------------- | ------------------------------------------------------------ | -------- |
-| 需求解析                         | `PlanAgent`（`src/agents/plan-agent.ts`）→ `plan.md`         | ✅       |
-| 多 Agent 协作                    | 6 个 `StageAgent`，仅 Orchestrator 调度，零直接调用          | ✅       |
-| 代码审查强制门禁                 | `ReviewAgent` 只读审查 + diff 指纹锚定 + 返工回路            | ✅       |
-| 测试验证强制门禁                 | `TestAgent` 真实运行白名单测试命令                           | ✅       |
-| Git 提交                         | `CommitAgent` + `GitCommitTool`，独立分支，不自动合并        | ✅       |
-| 过程可观测                       | `EventLog` JSONL + `replay` 回放器                           | ✅       |
-| 离线可视化报告                   | `events → ReportViewModel → HTML` + `report` CLI             | ✅       |
-| 流程可复现                       | `workflowTrace/workflowSignature` + 双 Run e2e 验证          | ✅       |
-| 上下文预算控制                   | `TokenBudgetTracker` + 每阶段独立预算（`config/budgets.ts`） | ✅       |
-| 安全边界                         | `ToolPolicy` 白名单 + 路径/symlink 防护 + 审计脱敏           | ✅       |
-| 动作级策略与审批                 | `PolicyResolver` + `ApprovalGateway` + `approval.*`          | ✅       |
-| 容器沙箱与资源上限               | Docker/Podman `ProcessRunner` + 默认拒绝本机降级             | ✅       |
-| 安全审计视图                     | 报告 security 投影与离线面板                                 | ✅       |
-| 分层项目记忆                     | `LayeredMemory` + EventLog L2 + `.forgemind/memory` L3       | ✅       |
-| 提示词版本与结构化输出           | `prompts/*.v1.md` + JSON Schema + 能力降级                   | ✅       |
-| 相关性上下文与审计               | `Context Assembler` + `context.assembled` + 报告面板         | ✅       |
-| 提示词评测                       | 4 场景 FakeProvider A/B 指标（`npm run eval`）               | ✅       |
-| 实时视图 / 跨项目语义记忆 / 并发 | 本轮非目标                                                   | ⏸ 规划中 |
+| PRD 能力                             | 实现落点                                                         | 状态     |
+| ------------------------------------ | ---------------------------------------------------------------- | -------- |
+| 需求解析                             | `PlanAgent`（`src/agents/plan-agent.ts`）→ `plan.md`             | ✅       |
+| 多 Agent 协作                        | 6 个 `StageAgent`，仅 Orchestrator 调度，零直接调用              | ✅       |
+| 代码审查强制门禁                     | `ReviewAgent` 只读审查 + diff 指纹锚定 + 返工回路                | ✅       |
+| 测试验证强制门禁                     | `TestAgent` 真实运行白名单测试命令                               | ✅       |
+| Git 提交                             | `CommitAgent` + `GitCommitTool`，独立分支，不自动合并            | ✅       |
+| 过程可观测                           | `EventLog` JSONL + `replay` 回放器                               | ✅       |
+| 离线可视化报告                       | `events → ReportViewModel → HTML` + `report` CLI                 | ✅       |
+| 流程可复现                           | `workflowTrace/workflowSignature` + 双 Run e2e 验证              | ✅       |
+| 上下文预算控制                       | `TokenBudgetTracker` + 每阶段独立预算（`config/budgets.ts`）     | ✅       |
+| 安全边界                             | `ToolPolicy` 白名单 + 路径/symlink 防护 + 审计脱敏               | ✅       |
+| 动作级策略与审批                     | `PolicyResolver` + `ApprovalGateway` + `approval.*`              | ✅       |
+| 容器沙箱与资源上限                   | Docker/Podman `ProcessRunner` + 默认拒绝本机降级                 | ✅       |
+| 安全审计视图                         | 报告 security 投影与离线面板                                     | ✅       |
+| 分层项目记忆                         | `LayeredMemory` + EventLog L2 + `.forgemind/memory` L3           | ✅       |
+| 提示词版本与结构化输出               | `prompts/*.v1.md` + JSON Schema + 能力降级                       | ✅       |
+| 相关性上下文与审计                   | `Context Assembler` + `context.assembled` + 报告面板             | ✅       |
+| 提示词评测                           | 4 场景 FakeProvider A/B 指标（`npm run eval`）                   | ✅       |
+| DAG 并发编排                         | `src/dag/`（plan/scheduler/task-runner）+ `dag run` CLI          | ✅       |
+| RBAC 权限治理                        | `src/auth/`（rbac/policy-source）+ `--actor-policy`              | ✅       |
+| 企业审计导出                         | `src/audit/`（query/export）+ `audit export` CLI                 | ✅       |
+| 主动事件监测                         | `src/agentic/`（trigger/watch/guardrail）+ `AgenticWatchService` | ✅       |
+| 实时视图 / 跨项目语义记忆 / 自由协商 | 本轮非目标                                                       | ⏸ 规划中 |
 
 ## 7. 演进路线
 
-| 阶段           | 内容          | 目标                                    |
-| -------------- | ------------- | --------------------------------------- |
-| Phase 1（MVP） | 完整闭环 Demo | 单条需求走通全链路，可演示、可复现      |
-| Phase 2        | 可观测增强    | ✅ 静态离线报告；实时协作视图待后续     |
-| Phase 3        | 生产级能力    | ✅ 权限审批与沙箱；并发任务待后续       |
-| Phase 4        | 长期记忆      | ✅ 项目 L2/L3；跨项目 L4 语义检索待后续 |
+| 阶段           | 内容          | 目标                                        |
+| -------------- | ------------- | ------------------------------------------- |
+| Phase 1（MVP） | 完整闭环 Demo | ✅ 单条需求走通全链路，可演示、可复现       |
+| Phase 2        | 可观测增强    | ✅ 静态离线报告；实时协作视图待后续         |
+| Phase 3        | 生产级能力    | ✅ 权限审批与沙箱、DAG 并发、RBAC、审计     |
+| Phase 4        | 长期记忆      | ✅ 项目 L2/L3 + 主动监测；L4 语义检索待后续 |
 
 ## 8. 关键约束
 

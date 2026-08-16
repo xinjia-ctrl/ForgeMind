@@ -16,6 +16,7 @@ import { LayeredMemory } from "../memory/layered-memory.js";
 import type { MemoryProvider } from "../memory/memory-provider.js";
 import { NoopMemoryProvider } from "../memory/noop-memory-provider.js";
 import { ProjectMemory } from "../memory/project-memory.js";
+import { ChatNegotiationTurnProvider, NegotiationProtocol } from "../negotiation/protocol.js";
 import { AutoApprovalGateway } from "../policy/auto-gateway.js";
 import { DenyApprovalGateway, type ApprovalGateway } from "../policy/gateway.js";
 import { InteractiveApprovalGateway } from "../policy/interactive-gateway.js";
@@ -108,6 +109,17 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
     }));
   const processRunner = options.processRunner ?? (await createProcessRunner(policyConfig.sandbox));
   const approvalGateway = options.approvalGateway ?? approvalGatewayFor(options);
+  const approvalContext =
+    options.actor === undefined
+      ? undefined
+      : {
+          actor: options.actor,
+          scope: {
+            repo: authorizationRepo,
+            ...(options.team === undefined ? {} : { team: options.team }),
+          },
+          risk: options.approvalRisk ?? ("high" as const),
+        };
   const policyResolver = new RulePolicyResolver(policyConfig.defaultMode, policyConfig.rules);
   if (options.memory === true) await excludeProjectMemory(inspected.commonGitDirectory);
   const workspace =
@@ -156,24 +168,29 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
       ? {}
       : { commandAllowlist: options.commandAllowlist }),
     ...(options.riskTransform === undefined ? {} : { riskTransform: options.riskTransform }),
-    ...(options.actor === undefined
-      ? {}
-      : {
-          approvalContext: {
-            actor: options.actor,
-            scope: {
-              repo: authorizationRepo,
-              ...(options.team === undefined ? {} : { team: options.team }),
-            },
-            risk: options.approvalRisk ?? "high",
-          },
-        }),
+    ...(approvalContext === undefined ? {} : { approvalContext }),
     memory,
+  });
+  const negotiation = new NegotiationProtocol({
+    eventLog,
+    proposal: new ChatNegotiationTurnProvider({
+      provider: options.provider,
+      model: options.model,
+      eventLog,
+    }),
+    counter: new ChatNegotiationTurnProvider({
+      provider: options.provider,
+      model: options.model,
+      eventLog,
+    }),
+    approvalGateway,
+    ...(approvalContext === undefined ? {} : { approvalContext }),
   });
   const orchestrator = new Orchestrator({
     eventLog,
     agentFactory: factory,
     memory,
+    negotiation,
     ...(options.maxRework === undefined ? {} : { maxRework: options.maxRework }),
     ...(options.actor === undefined ? {} : { actor: options.actor }),
   });

@@ -12,7 +12,7 @@ Do not invent a parallel framework or duplicate existing abstractions. Treat rec
 
 ## 输出 JSON Schema
 
-Return one JSON object with decisions[], files[{path,purpose}], risks[], and summary.
+Return one JSON object with decisions[], files[{path,purpose}], risks[], alternatives[{position,tradeoffs[]}], and summary. Return an empty alternatives array unless more than one materially different architecture is viable.
 
 ## 成功判据
 

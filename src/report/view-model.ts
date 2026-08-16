@@ -180,6 +180,10 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
     switch (event.type) {
       case "development.received":
       case "trigger.decided":
+      case "negotiation.started":
+      case "negotiation.round":
+      case "negotiation.resolved":
+      case "negotiation.escalated":
         break;
       case "run.started":
         requirement = event.data.requirement;
@@ -508,6 +512,10 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "run.started":
     case "development.received":
     case "trigger.decided":
+    case "negotiation.started":
+    case "negotiation.round":
+    case "negotiation.resolved":
+    case "negotiation.escalated":
     case "task.started":
     case "task.completed":
     case "task.failed":
@@ -537,7 +545,14 @@ function normalizeEvent(
 }
 
 function eventDetails(event: ForgeMindEvent): unknown {
-  if (event.type === "development.received" || event.type === "trigger.decided") {
+  if (
+    event.type === "development.received" ||
+    event.type === "trigger.decided" ||
+    event.type === "negotiation.started" ||
+    event.type === "negotiation.round" ||
+    event.type === "negotiation.resolved" ||
+    event.type === "negotiation.escalated"
+  ) {
     return event.data;
   }
   if (event.type === "tool.called") {
@@ -586,6 +601,14 @@ function eventSummary(event: ForgeMindEvent): string {
       return `Received ${event.data.developmentType} for ${event.data.objectKind} ${event.data.objectId}`;
     case "trigger.decided":
       return `${event.data.decision}: ${event.data.reason}`;
+    case "negotiation.started":
+      return `Negotiation started: ${event.data.trigger}`;
+    case "negotiation.round":
+      return `Negotiation round ${event.data.round}: ${event.data.status}`;
+    case "negotiation.resolved":
+      return `Negotiation resolved: ${event.data.decisionRecordId}`;
+    case "negotiation.escalated":
+      return `Negotiation ${event.data.reason}: ${event.data.approved ? "approved" : "denied"}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
     case "task.started":
@@ -663,6 +686,8 @@ function isCritical(event: ReportTimelineEvent): boolean {
     event.type === "approval.requested" ||
     event.type === "approval.approved" ||
     event.type === "approval.rejected" ||
+    event.type === "negotiation.resolved" ||
+    event.type === "negotiation.escalated" ||
     event.type === "gate.rejected" ||
     event.type === "gate.passed" ||
     (event.type === "tool.called" && event.outcome === "failed")

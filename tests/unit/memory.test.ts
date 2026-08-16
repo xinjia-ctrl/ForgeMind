@@ -11,6 +11,7 @@ import { EpisodicMemory } from "../../src/memory/episodic-memory.js";
 import { LayeredMemory } from "../../src/memory/layered-memory.js";
 import type { MemoryProvider, Retrieval } from "../../src/memory/memory-provider.js";
 import { ProjectMemory } from "../../src/memory/project-memory.js";
+import { createDecisionRecord } from "../../src/negotiation/record.js";
 
 describe("layered memory", () => {
   it("stores deterministic project decisions and rejected-gate lessons only when enabled", async () => {
@@ -152,6 +153,40 @@ describe("layered memory", () => {
       (await memory.recall("x", { scopes: ["project", "semantic"] })).map((item) => item.scope),
       ["project"],
     );
+  });
+
+  it("stores and recalls deterministic negotiation decision records", async () => {
+    const repository = await mkdtemp(path.join(os.tmpdir(), "forgemind-negotiation-memory-"));
+    try {
+      const memory = new ProjectMemory({ repositoryRoot: repository, writeEnabled: true });
+      const record = createDecisionRecord({
+        runId: "negotiation-memory-run",
+        topic: "Choose a bounded protocol",
+        trigger: "arch-conflict",
+        rounds: [
+          {
+            round: 1,
+            proposal: "Use an orchestrator-owned bounded protocol",
+            counter: "Put negotiation loops inside stage agents",
+            status: "CONVERGED",
+          },
+        ],
+        decision: "Use an orchestrator-owned bounded protocol",
+        escalated: false,
+        createdAt: "2026-08-14T00:00:00.000Z",
+      });
+      await memory.rememberDecisionRecord(record);
+      await memory.rememberDecisionRecord(record);
+      const recalled = await memory.recall("bounded protocol", { scopes: ["project"] });
+      assert.equal(recalled.length, 1);
+      assert.match(recalled[0]?.content ?? "", /orchestrator-owned bounded protocol/);
+      const document = JSON.parse(
+        await readFile(path.join(repository, ".forgemind/memory/decisions.json"), "utf8"),
+      ) as { entries: unknown[] };
+      assert.equal(document.entries.length, 1);
+    } finally {
+      await rm(repository, { recursive: true, force: true });
+    }
   });
 
   it("fails fast instead of overwriting a malformed project memory document", async () => {

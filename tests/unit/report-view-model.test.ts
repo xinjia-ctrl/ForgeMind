@@ -150,6 +150,48 @@ describe("report view model", () => {
     assert.equal(report.stats.perStage.find((stats) => stats.stage === "CODE")?.durationMs, null);
   });
 
+  it("projects bounded negotiation events into the auditable timeline", () => {
+    const report = buildReportViewModel([
+      event(1, "negotiation.started", {
+        runId: "negotiation-report-run",
+        negotiationId: "negotiation-id",
+        trigger: "review-repeated-rejection",
+        topic: "Resolve repeated review feedback",
+      }),
+      event(2, "negotiation.round", {
+        runId: "negotiation-report-run",
+        negotiationId: "negotiation-id",
+        round: 1,
+        status: "CONVERGED",
+        proposal: "<redacted>",
+        counter: "<redacted>",
+      }),
+      event(3, "negotiation.resolved", {
+        runId: "negotiation-report-run",
+        negotiationId: "negotiation-id",
+        decisionRecordId: "decision-id",
+        decision: "<redacted>",
+      }),
+    ]);
+    const timeline = report.timeline.flatMap((group) => group.events);
+    assert.deepEqual(
+      timeline.map((item) => [item.type, item.outcome]),
+      [
+        ["negotiation.started", "started"],
+        ["negotiation.round", "CONVERGED"],
+        ["negotiation.resolved", "resolved"],
+      ],
+    );
+    assert.deepEqual(timeline[1]?.details, {
+      runId: "negotiation-report-run",
+      negotiationId: "negotiation-id",
+      round: 1,
+      status: "CONVERGED",
+      proposal: "<redacted>",
+      counter: "<redacted>",
+    });
+  });
+
   it("projects approval events into a re-audited security panel", () => {
     const report = buildReportViewModel([
       event(1, "approval.requested", {

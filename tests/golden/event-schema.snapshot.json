@@ -71,6 +71,24 @@
     },
     {
       "seq": 12,
+      "type": "negotiation.started",
+      "stage": null,
+      "detail": "Negotiation started for arch-conflict: Choose the replay boundary"
+    },
+    {
+      "seq": 13,
+      "type": "negotiation.round",
+      "stage": null,
+      "detail": "Negotiation round 1: CONVERGED"
+    },
+    {
+      "seq": 14,
+      "type": "negotiation.resolved",
+      "stage": null,
+      "detail": "Negotiation resolved as decision-golden"
+    },
+    {
+      "seq": 15,
       "type": "run.finished",
       "stage": null,
       "detail": "FAILED: Planning failed"

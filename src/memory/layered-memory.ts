@@ -1,4 +1,5 @@
 import type { ArtifactRef, GateResult, TaskContext } from "../core/types.js";
+import type { DecisionRecord } from "../negotiation/types.js";
 import {
   MEMORY_SCOPES,
   type MemoryProvider,
@@ -28,6 +29,14 @@ export class LayeredMemory implements MemoryProvider {
   public async rememberGate(ctx: TaskContext, gate: GateResult): Promise<void> {
     await Promise.all(
       this.providers().map((provider) => provider.rememberGate?.(ctx, gate) ?? Promise.resolve()),
+    );
+  }
+
+  public async rememberDecisionRecord(record: DecisionRecord): Promise<void> {
+    await Promise.all(
+      this.providers().map(
+        (provider) => provider.rememberDecisionRecord?.(record) ?? Promise.resolve(),
+      ),
     );
   }
 

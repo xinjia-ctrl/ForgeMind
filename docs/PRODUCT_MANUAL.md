@@ -1,215 +1,197 @@
 # ForgeMind 产品使用手册
 
-> 版本：v0.5（对齐已实现代码）
+> 版本：v1.0（对齐已实现代码，覆盖 v0.2 → v3.0 全部能力，103/103 测试通过）
 > 说明：本手册面向使用者，描述**当前代码实际具备**的产品能力，不含规划中未实现的功能。
 
 ---
 
 ## 1. 产品是什么
 
-ForgeMind 是一个多 Agent 协作的软件研发编排器：输入一条自然语言需求，系统通过 6 个专职 Agent 依次完成 **规划 → 架构 → 编码 → 审查 → 测试 → 提交**，最终在你的 Git 仓库中产出一个通过审查与测试的 commit。
+ForgeMind 是一个多 Agent 协作的软件研发编排器。输入一条自然语言需求，系统通过 6 个专职 Agent 依次完成 **规划 → 架构 → 编码 → 审查 → 测试 → 提交**，最终产出通过审查与测试的 commit。支持**单任务顺序流水线**、**跨仓库 DAG 并发编排**、**主动事件监测**三种执行模式。
 
-**一句话**：你给需求，ForgeMind 给"已提交的代码"。
+**一句话**：你给需求，ForgeMind 给"已提交的代码"；你给事件，ForgeMind 自己发现要干什么。
 
-## 2. 产品边界（当前版本）
+## 2. 执行模式与产品边界
 
-| 项       | 现状                                                                      |
-| -------- | ------------------------------------------------------------------------- |
-| 输入     | 一条自然语言需求（≤ 100,000 字符）                                        |
-| 输出     | 一个 Git commit + 全流程事件日志（JSONL）+ 可选单文件 HTML 报告           |
-| 运行环境 | 目标仓库必须干净；测试命令默认在 Docker/Podman 容器沙箱执行               |
-| 模型     | 任意 OpenAI 兼容 Chat Completions 接口（`gpt-4.1-mini` 默认）             |
-| 测试执行 | 真实运行测试命令（自动探测 package test，回退 `node --test`，可显式指定） |
-| 长期记忆 | 默认关闭；`--memory` 显式启用项目内 L2 情景记忆与 L3 项目记忆             |
-| 可视化   | 任意历史 Run 可生成离线单文件 HTML 报告                                   |
+| 模式         | 命令                            | 适用场景                      | 状态 |
+| ------------ | ------------------------------- | ----------------------------- | ---- |
+| 单任务流水线 | `run`                           | 单个仓库、单条需求、固定顺序  | ✅   |
+| DAG 并发编排 | `dag run`                       | 跨仓库、多任务、并行执行      | ✅   |
+| 主动监测     | `AgenticWatchService`（库 API） | 监听 issue/CI/PR 事件自动触发 | ✅   |
+| 审计导出     | `audit export`                  | 企业审计 / 合规归档           | ✅   |
+
+| 项       | 现状                                                         |
+| -------- | ------------------------------------------------------------ |
+| 输入     | 自然语言需求（≤ 100,000 字符）+ 可选策略配置                 |
+| 输出     | Git commit + 事件日志（JSONL）+ 可视化报告（HTML）+ 审计导出 |
+| 模型     | 任意 OpenAI 兼容 Chat Completions 接口；原生结构化输出可开关 |
+| 测试执行 | 沙箱内运行（Docker 或本地降级），真实测试命令                |
+| 记忆     | 四层记忆：工作/情景/项目/语义，`--memory` 启用               |
+| 审批     | 策略网关：允许/需审批/拒绝，交互或自动                       |
+| 安全     | 沙箱 + RBAC 角色 + 全量审计                                  |
 
 ## 3. 使用前置条件
 
-1. Node.js ≥ 22，Git 已安装；默认安全模式需 Docker 或 Podman
+1. Node.js ≥ 22，Git 已安装；DAG 模式需 git worktree 支持
 2. 目标仓库：**干净的工作区** + **已有至少一个 commit** + **已配置 Git 作者**
-3. 环境变量：`OPENAI_API_KEY`（可自定义 `OPENAI_BASE_URL` 指向兼容服务）
-4. 策略配置包含使用 sha256 digest 固定的测试镜像
+3. 环境变量：`OPENAI_API_KEY`（可自定义 `OPENAI_BASE_URL`）
+4. 可选：`FORGEMIND_GLOBAL_CONFIG`（全局策略）、`FORGEMIND_STRUCTURED_OUTPUT`（结构化输出开关）
 
-## 4. 快速开始
+## 4. 单任务流水线（run）
 
 ```bash
 npm install
 npm run build
 
 export OPENAI_API_KEY="sk-..."
-export FORGEMIND_MODEL="gpt-4.1-mini"
 
-# 在一个干净的仓库目录中：
 node dist/src/runtime/cli.js run \
   --repo /abs/path/to/target-repo \
-  --requirement "添加一个健康检查接口，并附上测试" \
-  --config /abs/path/to/forgemind.config.json
+  --requirement "添加一个健康检查接口，并附上测试"
 ```
 
-成功后终端输出：
+| 选项                     | 说明                  | 默认                                |
+| ------------------------ | --------------------- | ----------------------------------- |
+| `--repo`                 | 目标仓库绝对路径      | 必填                                |
+| `--requirement`          | 自然语言需求          | 必填                                |
+| `--model`                | 模型名                | `FORGEMIND_MODEL` 或 `gpt-4.1-mini` |
+| `--base-url`             | OpenAI 兼容服务地址   | `OPENAI_BASE_URL` 或官方地址        |
+| `--run-id`               | 自定义运行 ID         | 自动生成                            |
+| `--test-command`         | 显式测试命令          | 自动探测                            |
+| `--max-rework`           | 返工上限              | 3                                   |
+| `--skip-git-hooks`       | 跳过 Git commit hooks | false                               |
+| `--memory`               | 启用四层记忆          | false                               |
+| `--config`               | 策略配置文件          | 无                                  |
+| `--yes` / `--no-approve` | 自动批准 / 禁止批准   | 交互                                |
+| `--actor-policy --actor` | RBAC 角色策略         | 无                                  |
 
-```json
+## 5. DAG 并发编排（dag run）
+
+跨仓库、多任务并行执行：
+
+```bash
+node dist/src/runtime/cli.js dag run \
+  --repos /abs/a,/abs/b \
+  --requirement "前后端联调支付模块" \
+  --max-concurrency 2
+```
+
+| 选项                | 说明                | 默认     |
+| ------------------- | ------------------- | -------- |
+| `--repos`           | 逗号分隔的仓库列表  | 必填     |
+| `--requirement`     | 需求                | 必填     |
+| `--max-concurrency` | 并行度上限          | 1        |
+| `--worktrees-root`  | git worktree 根目录 | 临时目录 |
+
+- 需求拆解为 DAG 任务，无依赖任务并行、有依赖等待前驱；
+- 每任务独立分支 + 独立沙箱 + 独立测试，各自过门禁；
+- 跨仓库全部成功后才产出结果，不自动 merge。
+
+## 6. 主动监测（Agentic）
+
+监听开发事件自动触发研发闭环。事件类型：`issue.updated / issue.assigned / ci.failed / pr.mentioned / approval.timed_out`；来源：`github / jira / ci / forgemind`。
+
+通过配置文件声明触发规则与护栏：
+
+```jsonc
 {
-  "status": "SUCCEEDED",
-  "summary": "Created commit <sha>",
-  "branch": "forgemind/<run-id>",
-  "eventLog": "/abs/path/.git/forgemind/runs/<run-id>.jsonl"
-}
-```
-
-## 5. 完整执行流程（使用者视角）
-
-```
-PLAN  → 生成任务计划 docs/.forgemind/<run-id>/plan.md
-ARCH  → 生成架构决策 docs/.forgemind/<run-id>/architecture.md
-CODE  → 生成代码 + 测试（最多 30 个文件操作）
-REVIEW→ 只读审查 diff；发现缺陷 → 驳回 → 带着反馈回到 CODE
-TEST  → 真实运行测试；失败 → 带着输出回到 CODE
-COMMIT→ 通过全部门禁后创建 commit（不自动合并分支）
-```
-
-- 每次 Run 在**独立分支 `forgemind/<run-id>`** 上进行，不触碰主分支。
-- 失败/成功均保留分支与变更，供审计和恢复。
-- REVIEW 驳回或 TEST 失败后最多返工 `max-rework` 轮（默认 3），超限即 FAILED。
-
-## 6. 命令行
-
-### 运行
-
-```bash
-forge-mind run --repo <path> --requirement <text> [选项]
-```
-
-| 选项               | 说明                                  | 默认                                 |
-| ------------------ | ------------------------------------- | ------------------------------------ |
-| `--repo`           | 目标仓库绝对路径                      | 必填                                 |
-| `--requirement`    | 自然语言需求                          | 必填                                 |
-| `--model`          | 模型名                                | `FORGEMIND_MODEL` 或 `gpt-4.1-mini`  |
-| `--base-url`       | OpenAI 兼容服务地址                   | `OPENAI_BASE_URL` 或官方地址         |
-| `--run-id`         | 自定义运行 ID（字母数字 `._-`，≤128） | 自动生成                             |
-| `--test-command`   | 显式测试命令                          | 自动探测 `package.json` 的 test 脚本 |
-| `--max-rework`     | 返工上限                              | 3                                    |
-| `--config`         | 项目策略配置文件                      | 无；仍会读取全局/环境/仓库级配置     |
-| `--yes`            | 自动批准命中 `approve` 的动作         | false                                |
-| `--no-approve`     | 拒绝所有需审批动作                    | 非交互环境默认采用                   |
-| `--memory`         | 启用历史 Run 召回和项目记忆读写       | false                                |
-| `--skip-git-hooks` | 显式跳过 Git commit hooks             | false（默认执行 hooks）              |
-
-### 回放
-
-```bash
-forge-mind replay --repo <path> --run-id <run-id>
-```
-
-输出按序排列的完整事件时间线（每一步的 LLM 调用、工具调用、门禁判定）及 `workflowSignature`，用于演示、审计与流程一致性比较。
-
-### 生成可视化报告
-
-```bash
-forge-mind report --repo <path> --run-id <run-id>
-```
-
-报告写入 `<git-dir>/forgemind/reports/<run-id>.html`，直接用浏览器离线打开，无需启动服务或联网。报告包含：
-
-- 按实际顺序排列的阶段/attempt 时间线与播放控制；
-- REVIEW/TEST 门禁判定及返工标记；
-- 失败阶段、Stage/Hard/Fatal 类型和错误信息；
-- 各阶段 LLM token、工具调用数和可对账耗时；
-- 产物列表、审计后的工具详情与流程签名。
-- 安全审计面板：策略模式、审批请求/批准/拒绝、决策来源、时间和脱敏动作。
-- 记忆面板：召回/存储的层、来源、命中依据、分数与是否使用。
-- 提示词版本面板：每个 LLM 阶段实际使用的资源版本及结构化输出状态。
-- 上下文审计面板：注入 section 的来源、引用文件和估算 token 分布。
-
-## 7. 产物与可观测性
-
-- **工作区产物**：`docs/.forgemind/<run-id>/plan.md`、`architecture.md`
-- **可选项目记忆**：`.forgemind/memory/decisions.json`、`lessons.json`（仅 `--memory`；加入目标仓库的 Git 本地 exclude，不进入生成 commit）
-- **事件日志**：`.git/forgemind/runs/<run-id>.jsonl`（不进入 commit，不污染产出）
-- **可视化报告**：`.git/forgemind/reports/<run-id>.html`（日志的只读投影，不是第二份事实源）
-- **事件类型**：除运行、阶段、LLM、工具、产物和门禁事件外，包含 `approval.*`、`memory.recalled / memory.stored` 与 `context.assembled`
-- **门禁判定**：REVIEW 以 diff 指纹（sha256）锚定，防止"审查后工作区又变了"；COMMIT 前强制复核 diff 指纹一致。
-- **流程签名**：`workflowSignature` 忽略时间戳、runId、commit sha 等非确定数据，对事件顺序、阶段、工具结果和门禁结果生成稳定 sha256。
-
-## 8. 安全策略与沙箱
-
-`run_command` 默认通过 Docker/Podman 沙箱执行。执行前依次经过阶段工具白名单、动作级三态策略和审批网关：
-
-- 策略模式：`allow` 自动放行、`approve` 需审批、`deny` 禁止；未命中规则默认拒绝
-- 配置顺序：内置安全默认 → `FORGEMIND_GLOBAL_CONFIG` → `FORGEMIND_POLICY_JSON` → `--config` → 仓库 `forgemind.config.json`，后层同具体度规则优先
-- 容器隔离：宿主工作区只读挂载到 `/source`，复制至 `/workspace` tmpfs 后测试；副产物不回传宿主
-- 资源限制：网络默认关闭，限制 CPU、内存、PID、超时和输出；丢弃 Linux capabilities，禁止提权
-- 镜像必须使用 `image@sha256:<digest>` 固定；无容器运行时或镜像未固定会在启动时失败
-- 命令白名单：只能运行 `npm/pnpm/yarn/bun/node` 的测试类命令，无 shell，禁路径穿越
-- 工具按阶段白名单：REVIEW/TEST 只读，CODE 可写但禁写 `docs/.forgemind` 与 `.git`
-- 路径安全：目录穿越、symlink 逃逸、Git 元数据访问均被拒绝
-- 审计脱敏：事件日志对密钥/内容类字段脱敏、超长截断
-- 报告安全：工具参数/结果二次脱敏，所有动态内容 HTML 转义，CSP 禁止外部资源与联网
-- Git hooks 默认执行；仅显式 `--skip-git-hooks` 时跳过，并在 ToolPolicy 审计描述中记录
-
-显式设置 `sandbox.mode=local` 可用于受信任环境的兼容测试，但必须同时使用 `defaultMode=deny`；本机进程仍会在事件中标记为 `local/host`，不会伪装成沙箱。
-
-最小配置示例：
-
-```json
-{
-  "defaultMode": "deny",
+  "repositories": ["owner/repo-a"],
+  "dailyTaskQuota": 20,
+  "rateLimit": { "maxRuns": 5, "windowMs": 60000 },
+  "guardrails": {
+    "allowedTools": ["read_file", "grep", "write_file"],
+    "allowedCommands": [["npm", "test"]],
+  },
   "rules": [
     {
-      "match": { "stage": "COMMIT", "tool": "git_commit" },
-      "mode": "approve"
-    }
+      "id": "fix-ci",
+      "match": { "type": "ci.failed", "source": "ci", "repo": "owner/repo-a" },
+      "run": { "requirement": "分析并修复 CI 失败，{{event.id}}", "priority": "high" },
+      "cooldownMs": 300000,
+    },
   ],
-  "sandbox": {
-    "mode": "container",
-    "runtime": "auto",
-    "image": "your-image@sha256:<64位十六进制摘要>",
-    "cpu": 1,
-    "memoryMb": 512,
-    "pidsLimit": 128,
-    "network": false
-  }
 }
 ```
 
-## 9. 已知限制与失败场景
+三层护栏防止失控：
 
-| 场景                              | 行为                                                         |
-| --------------------------------- | ------------------------------------------------------------ |
-| 目标仓库有未提交变更              | 拒绝执行（HardFailure）                                      |
-| 无 LLM API Key                    | 拒绝执行                                                     |
-| LLM 返回非 JSON / 缺字段          | 阶段失败，Run 失败                                           |
-| REVIEW diff 超限截断              | 直接驳回并提示缩小变更                                       |
-| TEST 超时（默认 5 分钟）/输出超限 | 视为测试失败                                                 |
-| 返工超限                          | FAILED，保留现场                                             |
-| 无效 run-id / 重复 run-id         | 拒绝（FatalFailure）                                         |
-| Git commit hook 失败              | FAILED，保留分支供处理                                       |
-| 策略配置非法 / 镜像未固定         | 启动时 HardFailure                                           |
-| Docker/Podman 不可用              | 默认拒绝并给出降级指引                                       |
-| 审批拒绝 / 非交互环境未显式批准   | 动作不执行，Run FAILED                                       |
-| 容器 OOM / 超时 / 非零退出        | TEST 门禁失败并保留审计                                      |
-| 项目记忆 JSON 损坏                | HardFailure，保留原文件且不覆盖                              |
-| 模型不支持 JSON Schema            | 关闭能力位；本次有内容则按旧 JSON 解析，否则阶段失败；不重试 |
+1. **授权白名单**：只有 `repositories` 列表内的仓库才会触发；
+2. **配额与限流**：`dailyTaskQuota` 每日上限 + `rateLimit` 窗口限流；
+3. **事件去重与冷却**：重复事件忽略、同一对象冷却期内合并、`cooldownMs` 防抖。
 
-## 10. 常见问题
+决策类型：`TRIGGER`（触发 Run）/ `IGNORE`（忽略）/ `MERGE`（合并进进行中任务）/ `DEFER`（限流延后）。所有决策写入事件日志。
 
-**Q：测试命令怎么被确定的？**
-自动读取仓库 `package.json` 的 `scripts.test`；非 Node 仓库可用 `--test-command "node --test"` 显式指定。
+## 7. 审批与权限（RBAC）
 
-**Q：为什么我的仓库必须有已提交内容？**
-`prepareGitWorkspace` 要求工作区干净，且不支持 detached HEAD。
+- **审批网关**：`--yes`（自动批准）/ `--no-approve`（禁止批准）/ 交互式询问三种模式；
+- **策略配置**：`--config` / `FORGEMIND_GLOBAL_CONFIG` / `FORGEMIND_POLICY_JSON` 三级来源，deny-by-default；
+- **RBAC 角色**：`--actor-policy <path> --actor <id>` 指定操作者与角色，高风险动作需匹配角色权限。
 
-**Q：产物为什么不进 commit？**
-运行事件写入 `.git/forgemind/runs/`（Git 元数据目录），从设计上避免污染提交产物。
+## 8. 记忆（四层）
 
-**Q：报告为什么不需要服务？**
-报告是内嵌 CSS/JavaScript 的单个 HTML 文件，所有数据都来自对应 Run 的 JSONL 事件日志；它不加载任何外链资源。
+`--memory` 启用后：
 
-**Q：CI 中如何处理审批？**
-在策略中保持危险动作是 `approve`，再显式传 `--yes`；事件会记录 `decisionSource=auto`。若希望 CI 验证必须拒绝审批，传 `--no-approve`。
+| 层       | 记什么             | 载体                      |
+| -------- | ------------------ | ------------------------- |
+| 工作记忆 | 当前 Run 决策      | `TaskContext`             |
+| 情景记忆 | 历史 Run 事件轨迹  | `EventLog`                |
+| 项目记忆 | 项目约定/决策/教训 | 仓库 `.forgemind/memory/` |
+| 语义记忆 | 跨任务知识         | 接缝预留                  |
 
-**Q：项目记忆会污染 commit 吗？**
-不会。只有显式传 `--memory` 才会写入 `.forgemind/memory/`，运行入口同时把该目录加入目标仓库的 Git 本地 exclude。记忆可查看、删除，但不会被 `git add --all` 纳入 ForgeMind 生成的 commit。
+新 Run 会检索相关记忆注入 PLAN/ARCH 上下文；`memory.recalled / memory.stored` 事件可见可审计。
 
-**Q：如何评估提示词改动？**
-运行 `npm run eval`。它用确定性 FakeProvider 对 4 条代表性需求比较旧版与当前提示词的通过率、返工轮次、越权工具调用和估算 token 成本。
+## 9. 回放与报告
+
+```bash
+forge-mind replay --repo <path> --run-id <run-id>   # 事件时间线 + workflowSignature
+forge-mind report --repo <path> --run-id <run-id>   # 单文件 HTML 报告（离线可打开）
+```
+
+报告包含：阶段时间线 + 播放控制、门禁判定与返工标记、失败定位（Stage/Hard/Fatal）、每阶段 token/工具/耗时、审计后的工具详情、流程签名。
+
+## 10. 审计导出
+
+```bash
+forge-mind audit export \
+  --repo <path> --from 2026-08-01T00:00:00Z --to 2026-08-31T00:00:00Z \
+  --actor-policy <path> --actor <admin-id> \
+  --format json|csv
+```
+
+按时间窗口导出全部 Run、审批决策、命令执行与 token 消耗，用于合规归档。
+
+## 11. 安全边界
+
+- **沙箱执行**：测试命令在 Docker 沙箱运行（不可用时降级本地，均有检测与降级证据入审计）；
+- **命令白名单**：仅测试类命令，无 shell，禁路径穿越；
+- **路径安全**：目录穿越、symlink 逃逸、Git 元数据访问均被拒绝；
+- **审批门禁**：高风险动作必须审批，决策全量入审计；
+- **RBAC**：权限 deny-by-default，最小权限；
+- **审计脱敏**：事件日志对密钥/内容脱敏、超长截断；报告二次脱敏 + HTML 转义 + CSP 零外链；
+- **Git hooks**：默认执行，仅显式 `--skip-git-hooks` 跳过并记入策略。
+
+> ⚠️ 主动监测与沙箱仅对**受信任的仓库与配置**运行。三层护栏是失控的最后防线。
+
+## 12. 已知限制与失败场景
+
+| 场景                     | 行为                    |
+| ------------------------ | ----------------------- |
+| 目标仓库有未提交变更     | 拒绝执行（HardFailure） |
+| 无 LLM API Key           | 拒绝执行                |
+| LLM 返回非 JSON / 缺字段 | 阶段失败，Run 失败      |
+| REVIEW diff 超限截断     | 直接驳回并提示缩小变更  |
+| TEST 超时/输出超限       | 视为测试失败            |
+| 返工超限                 | FAILED，保留现场        |
+| DAG 任务依赖成环         | 拆解阶段报错            |
+| 主动事件未授权仓库       | IGNORE，入审计          |
+| 配额/限流命中            | DEFER，延后重试         |
+
+## 13. 常见问题
+
+**Q：测试命令怎么确定？** 自动读 `package.json` 的 test 脚本，非 Node 仓库用 `--test-command` 显式指定。
+
+**Q：DAG 模式为什么需要 worktree？** 每任务独立工作区，`--worktrees-root` 指定根目录。
+
+**Q：主动监测怎么接入？** 通过库 API 注入 `DevelopmentEventPoller` 与 `AgenticRunDispatcher`，或直接 `accept(event)` 喂事件。
+
+**Q：记忆会不会污染代码？** 记忆只读注入，落盘需确认（`.forgemind/memory/`），可查看可删除。
