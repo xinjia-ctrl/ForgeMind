@@ -10,6 +10,7 @@ export { ContainerProcessRunner } from "./sandbox/docker.js";
 export { LayeredMemory } from "./memory/layered-memory.js";
 export { EpisodicMemory } from "./memory/episodic-memory.js";
 export { ProjectMemory } from "./memory/project-memory.js";
+export { LexicalEmbeddingProvider, SemanticMemory } from "./memory/semantic-memory.js";
 export { EventLog } from "./core/event-log.js";
 export { Orchestrator } from "./core/orchestrator.js";
 export { OpenAICompatibleChatProvider } from "./llm/openai-compatible-provider.js";
@@ -40,6 +41,18 @@ export {
 } from "./agentic/guardrail.js";
 export type { ChatProvider } from "./llm/chat-provider.js";
 export type { RunResult, TaskContext } from "./core/types.js";
+export type {
+  MemoryProvider,
+  MemoryScope,
+  RecallOptions,
+  Retrieval,
+} from "./memory/memory-provider.js";
+export type {
+  EmbeddingProvider,
+  LexicalEmbeddingProviderOptions,
+  SemanticMemoryOptions,
+} from "./memory/semantic-memory.js";
+export type { RunExecution, RunOptions } from "./runtime/run.js";
 export type {
   DagPlan,
   DagResult,

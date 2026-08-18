@@ -16,6 +16,7 @@ import { LayeredMemory } from "../memory/layered-memory.js";
 import type { MemoryProvider } from "../memory/memory-provider.js";
 import { NoopMemoryProvider } from "../memory/noop-memory-provider.js";
 import { ProjectMemory } from "../memory/project-memory.js";
+import { SemanticMemory, type EmbeddingProvider } from "../memory/semantic-memory.js";
 import { ChatNegotiationTurnProvider, NegotiationProtocol } from "../negotiation/protocol.js";
 import { AutoApprovalGateway } from "../policy/auto-gateway.js";
 import { DenyApprovalGateway, type ApprovalGateway } from "../policy/gateway.js";
@@ -44,6 +45,7 @@ export interface RunOptions {
   readonly approvalGateway?: ApprovalGateway;
   readonly memory?: boolean;
   readonly memoryProvider?: MemoryProvider;
+  readonly embeddingProvider?: EmbeddingProvider;
   readonly parentRunId?: string;
   readonly taskId?: string;
   readonly preparedWorkspace?: GitWorkspace;
@@ -76,6 +78,12 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
   }
   if (options.approveAll === true && options.noApprove === true) {
     throw new Error("approveAll and noApprove cannot both be enabled");
+  }
+  if (options.embeddingProvider !== undefined && options.memory !== true) {
+    throw new Error("embeddingProvider requires memory to be enabled");
+  }
+  if (options.embeddingProvider !== undefined && options.memoryProvider !== undefined) {
+    throw new Error("embeddingProvider and memoryProvider cannot both be provided");
   }
   const runId = options.runId ?? createRunId();
   assertValidRunId(runId);
@@ -140,7 +148,12 @@ export async function runForgeMind(options: RunOptions): Promise<RunExecution> {
               writeEnabled: true,
               eventLog,
             }),
-            semantic: null,
+            semantic: new SemanticMemory({
+              repositoryRoots: [workspace.root],
+              ...(options.embeddingProvider === undefined
+                ? {}
+                : { embeddingProvider: options.embeddingProvider }),
+            }),
           },
         })
       : new NoopMemoryProvider());

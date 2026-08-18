@@ -3,7 +3,7 @@
 > 迭代：v3.0（第九轮，终极形态）
 > 对齐：`docs/PRD-v3.0-os.md`（终极形态主线）
 > 前置：v3.0 主动层（`src/agentic/`）已实现；A2 协商与 A3 L4 记忆为本轮新增设计
-> 状态：A1 与 A2 核心已实现；A2 跨任务 Artifact 运行时接入、A3 L4 记忆与 A4 质量回馈待实现
+> 状态：A1、A2 核心与 A3 L4 记忆已实现；A2 跨任务 Artifact 运行时接入与 A4 质量回馈待实现
 > 技术栈：TypeScript / Node，**严守零运行时第三方依赖**
 
 > 说明：`ARCHITECTURE-v3.0-agentic.md` 已细化主动触发层（A1 + guardrail），本文档为对齐 `PRD-v3.0-os.md` 的**完整架构**，在主动层之上新增 A2 协商与 A3 L4 记忆设计。
@@ -153,7 +153,7 @@ interface EmbeddingProvider {
 }
 ```
 
-- **默认实现**（零依赖）：`LexicalEmbeddingProvider`——TF-IDF 关键词向量 + 符号归一化（大小写/标点/复数），与关键词层互补而非替代。
+- **默认实现**（零依赖）：`LexicalEmbeddingProvider`——确定性哈希 TF 向量 + corpus BM25/IDF + 符号归一化（大小写/标点/复数），与关键词层互补而非替代。
 - **向量实现**：外部库/服务作为 `EmbeddingProvider` 的可选实现接入，不改变 `recall` 接口，不引入运行时依赖。
 - **写路径不变**：语义层只做检索增强，`remember` 仍走确定性投影（ADR-7），LLM 不参与记忆生成。
 
@@ -203,7 +203,7 @@ golden 快照同步；`parseEvent` 兼容旧日志；`workflowSignature` 按 run
 | A3 L4        | 词法检索相关性、EmbeddingProvider 接缝（注入 fake 向量）、decision-record 跨 Run 检索 | 单元 + e2e                                         |
 | A4（P1）     | 质量指标聚合、反馈可见性                                                              | 单元                                               |
 
-回归要求：`npm run check` + 既有 103 测试 + 本轮新增全部通过。A2 完成后共 114 个测试。
+回归要求：`npm run check` + 既有测试 + 本轮新增全部通过。A3 完成后共 120 个测试。
 
 ## 10. 风险与决策记录
 
@@ -221,7 +221,7 @@ golden 快照同步；`parseEvent` 兼容旧日志；`workflowSignature` 按 run
 | -------- | ------------------------------------------------------------------------------------------------------------------ |
 | A1       | 已实现（`src/agentic/`）                                                                                           |
 | A2       | ✅ 核心：`src/negotiation/` + `negotiation.*` 事件 + ArchitectureAgent 契约扩展；Artifact 运行时接入待显式引用契约 |
-| A3       | `src/memory/semantic-memory.ts` + `EmbeddingProvider` 接缝 + decisions.json 沉淀                                   |
+| A3       | ✅ `src/memory/semantic-memory.ts` + `EmbeddingProvider` 接缝 + decisions.json/lessons.json 检索                   |
 | A4（P1） | `run.quality` 事件 + 报告质量面板                                                                                  |
 
 ## 12. 完成度对照
@@ -232,5 +232,5 @@ golden 快照同步；`parseEvent` 兼容旧日志；`workflowSignature` 按 run
 | 主动层审计事件（development._/trigger._）        | ✅      | `src/core/events.ts`                               |
 | RBAC/风险等级（v2.0 基座）                       | ✅      | `src/auth/types.ts`                                |
 | A2 协商协议                                      | ✅ 核心 | ARCH/REVIEW 已接入；Artifact mismatch 为纯检测接缝 |
-| A3 L4 语义记忆                                   | ⏳ 规划 | `src/memory/semantic-memory.ts`（本文档 §5）       |
+| A3 L4 语义记忆                                   | ✅      | `src/memory/semantic-memory.ts`（本文档 §5）       |
 | A4 质量回馈                                      | ⏳ P1   | 本文档 §6                                          |

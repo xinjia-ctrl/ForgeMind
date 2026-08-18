@@ -223,6 +223,9 @@ it("injects memory from the first run into PLAN and ARCH on the second run", asy
     assert.ok(
       events.some((event) => event.type === "memory.recalled" && event.data.scope === "project"),
     );
+    assert.ok(
+      events.some((event) => event.type === "memory.recalled" && event.data.scope === "semantic"),
+    );
     assert.equal(
       events.some((event) => event.type === "memory.stored"),
       false,
