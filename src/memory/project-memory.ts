@@ -4,6 +4,7 @@ import path from "node:path";
 import type { EventLog } from "../core/event-log.js";
 import type { ArtifactRef, GateResult, StageId, TaskContext } from "../core/types.js";
 import type { DecisionRecord } from "../negotiation/types.js";
+import type { RunQualityMetrics } from "../quality/types.js";
 import { keywords } from "./keywords.js";
 import type { MemoryProvider, RecallOptions, Retrieval } from "./memory-provider.js";
 import {
@@ -73,6 +74,33 @@ export class ProjectMemory implements MemoryProvider {
       ["negotiation", record.trigger, record.topic, record.createdAt],
     );
     await this.store("decisions.json", [entry], record.runId);
+  }
+
+  public async rememberQuality(quality: RunQualityMetrics): Promise<void> {
+    if (!this.#writeEnabled) return;
+    const coverage =
+      quality.codeCoveragePercent === null
+        ? "code coverage unavailable"
+        : `code coverage ${quality.codeCoveragePercent}%`;
+    const recommendations =
+      quality.recommendations.length === 0
+        ? "No quality recommendations."
+        : `Recommendations: ${quality.recommendations.join(" ")}`;
+    const entry = memoryEntry(
+      "lesson",
+      [
+        `Run quality ${quality.grade} (${quality.score}/100) for requirement: ${quality.requirement || "unknown"}; status ${quality.status};`,
+        `gate pass ${quality.gatePassRate}% (${quality.gatesPassed}/${quality.gatesTotal});`,
+        `rework rounds ${quality.reworkRounds};`,
+        `test pass ${quality.testPassRate}% (${quality.testsPassed}/${quality.testsTotal});`,
+        `${coverage}.`,
+        recommendations,
+      ].join(" "),
+      quality.runId,
+      "TEST",
+      ["quality", quality.grade, quality.status, "run-quality"],
+    );
+    await this.store("lessons.json", [entry], quality.runId);
   }
 
   public async recall(query: string, options: RecallOptions = {}): Promise<readonly Retrieval[]> {

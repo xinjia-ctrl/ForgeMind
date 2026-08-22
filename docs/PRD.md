@@ -1,7 +1,7 @@
 # ForgeMind 产品需求文档（PRD）
 
-> 版本：v3.0（主动监测、有界协商与 L4 语义记忆已实现，全能力对齐代码）
-> 状态：v3.0 A1/A2 核心/A3 已实现（120/120 测试通过）
+> 版本：v3.0（npm 发布版本 `3.0.0`；主动监测、有界协商、L4 语义记忆与质量回馈已实现）
+> 状态：v3.0 全部验收项已实现；`npm run check` 通过（151 项：148 通过，3 项真实依赖 smoke 条件跳过）
 > 演进总览：v0.2 闭环 → v0.3 可观测 → v0.4 安全 → v0.5 记忆/提示词 → v1.0 DAG/多仓库 → v2.0 企业集成/RBAC/审计 → v3.0 主动监测/有界协商/语义记忆
 
 ## 1. 产品定位
@@ -73,38 +73,44 @@ MVP 只做一件事并做通：**一个自然语言需求，经多 Agent 协作�
 - [x] RBAC 角色生效，未授权动作拒绝且入审计；
 - [x] `audit export` 按窗口导出审计数据（JSON/CSV）；
 - [x] 主动监测：事件经去重/配额/冷却判定后触发，`development.received` / `trigger.decided` 全量落盘。
+- [x] 主动层 cursor、去重、限流、每日配额、pending 与 dispatch 重试通过原子 checkpoint 跨重启恢复。
+- [x] GitHub/Jira/CI Webhook 在解析前校验原始字节 HMAC；GitHub Workflow、Jira Issue 与通用 CI Poller 支持持久 cursor。
+- [x] 幂等 dispatcher 将单仓请求路由到 `runForgeMind`、多仓请求路由到 `runDagForgeMind`，并持久化 RUNNING/FAILED/COMPLETED 状态。
+- [x] 成功 Run 可推送独立分支、创建/复用 GitHub PR，并幂等回写 GitHub Issue/PR、Jira Issue 或 CI；不自动合并。
 - [x] 协商触发后最多三轮收敛或升级，结构化 `DecisionRecord` 确定性写入 L3。
 - [x] 后续 Run 可通过 L4 召回历史决策/教训，`memory.recalled` 记录 `semantic` 命中依据。
 
-> **实现状态说明（v3.0）**：原有闭环、安全与门禁语义保持不变。记忆默认关闭，只有 `--memory` 或 API 注入 Provider 时启用；L4 默认使用零依赖词法向量 + BM25，可通过 `EmbeddingProvider` 注入外部向量实现。项目记忆通过 Git 本地 exclude 不进入生成的 commit。主动监测为库 API（`AgenticWatchService`），需接入事件源与调度器。Docker/Podman 跨平台运行仍需发布环境 smoke test。
+> **实现状态说明（v3.0）**：原有闭环、安全与门禁语义保持不变。记忆默认关闭，只有 `--memory` 或 API 注入 Provider 时启用；L4 默认使用零依赖词法向量 + BM25，也提供 `OpenAICompatibleEmbeddingProvider` 外部向量实现。项目记忆通过 Git 本地 exclude 不进入生成的 commit。主动监测为库 API（`AgenticWatchService`），已经具备签名 Webhook、cursor Poller、持久幂等 dispatcher 和 PR/评论回写；部署方只需注入凭据、HTTP 路由与仓库路径解析。真实容器、外部模型和向量 Provider 由 `test:smoke:release` 在具备凭据与运行时的发布环境强制验证。
 
 ## 6. 核心能力与实现对照（v3.0）
 
-| PRD 能力               | 实现落点                                                         | 状态     |
-| ---------------------- | ---------------------------------------------------------------- | -------- |
-| 需求解析               | `PlanAgent`（`src/agents/plan-agent.ts`）→ `plan.md`             | ✅       |
-| 多 Agent 协作          | 6 个 `StageAgent`，仅 Orchestrator 调度，零直接调用              | ✅       |
-| 代码审查强制门禁       | `ReviewAgent` 只读审查 + diff 指纹锚定 + 返工回路                | ✅       |
-| 测试验证强制门禁       | `TestAgent` 真实运行白名单测试命令                               | ✅       |
-| Git 提交               | `CommitAgent` + `GitCommitTool`，独立分支，不自动合并            | ✅       |
-| 过程可观测             | `EventLog` JSONL + `replay` 回放器                               | ✅       |
-| 离线可视化报告         | `events → ReportViewModel → HTML` + `report` CLI                 | ✅       |
-| 流程可复现             | `workflowTrace/workflowSignature` + 双 Run e2e 验证              | ✅       |
-| 上下文预算控制         | `TokenBudgetTracker` + 每阶段独立预算（`config/budgets.ts`）     | ✅       |
-| 安全边界               | `ToolPolicy` 白名单 + 路径/symlink 防护 + 审计脱敏               | ✅       |
-| 动作级策略与审批       | `PolicyResolver` + `ApprovalGateway` + `approval.*`              | ✅       |
-| 容器沙箱与资源上限     | Docker/Podman `ProcessRunner` + 默认拒绝本机降级                 | ✅       |
-| 安全审计视图           | 报告 security 投影与离线面板                                     | ✅       |
-| 四层记忆与语义检索     | `LayeredMemory` + L2/L3 + `SemanticMemory` L4                    | ✅       |
-| 提示词版本与结构化输出 | `prompts/*.v1.md` + JSON Schema + 能力降级                       | ✅       |
-| 相关性上下文与审计     | `Context Assembler` + `context.assembled` + 报告面板             | ✅       |
-| 提示词评测             | 4 场景 FakeProvider A/B 指标（`npm run eval`）                   | ✅       |
-| DAG 并发编排           | `src/dag/`（plan/scheduler/task-runner）+ `dag run` CLI          | ✅       |
-| RBAC 权限治理          | `src/auth/`（rbac/policy-source）+ `--actor-policy`              | ✅       |
-| 企业审计导出           | `src/audit/`（query/export）+ `audit export` CLI                 | ✅       |
-| 主动事件监测           | `src/agentic/`（trigger/watch/guardrail）+ `AgenticWatchService` | ✅       |
-| 有界多 Agent 协商      | `src/negotiation/` + `DecisionRecord` L3 沉淀                    | ✅ 核心  |
-| 实时视图 / 自由协商    | 本轮非目标                                                       | ⏸ 规划中 |
+| PRD 能力               | 实现落点                                                         | 状态 |
+| ---------------------- | ---------------------------------------------------------------- | ---- |
+| 需求解析               | `PlanAgent`（`src/agents/plan-agent.ts`）→ `plan.md`             | ✅   |
+| 多 Agent 协作          | 6 个 `StageAgent`，仅 Orchestrator 调度，零直接调用              | ✅   |
+| 代码审查强制门禁       | `ReviewAgent` 只读审查 + diff 指纹锚定 + 返工回路                | ✅   |
+| 测试验证强制门禁       | `TestAgent` 真实运行白名单测试命令                               | ✅   |
+| Git 提交               | `CommitAgent` + `GitCommitTool`，独立分支，不自动合并            | ✅   |
+| 过程可观测             | `EventLog` JSONL + `replay` 回放器                               | ✅   |
+| 离线可视化报告         | `events → ReportViewModel → HTML` + `report` CLI                 | ✅   |
+| 流程可复现             | `workflowTrace/workflowSignature` + 双 Run e2e 验证              | ✅   |
+| 上下文预算控制         | `TokenBudgetTracker` + 每阶段独立预算（`config/budgets.ts`）     | ✅   |
+| 安全边界               | `ToolPolicy` 白名单 + 路径/symlink 防护 + 审计脱敏               | ✅   |
+| 动作级策略与审批       | `PolicyResolver` + `ApprovalGateway` + `approval.*`              | ✅   |
+| 容器沙箱与资源上限     | Docker/Podman `ProcessRunner` + 默认拒绝本机降级                 | ✅   |
+| 安全审计视图           | 报告 security 投影与离线面板                                     | ✅   |
+| 四层记忆与语义检索     | L2/L3 + L4 默认词法及 OpenAI-compatible 外部向量 Provider        | ✅   |
+| 提示词版本与结构化输出 | `prompts/*.v1.md` + JSON Schema + 能力降级                       | ✅   |
+| 相关性上下文与审计     | `Context Assembler` + `context.assembled` + 报告面板             | ✅   |
+| 提示词评测             | 4 场景 FakeProvider A/B 指标（`npm run eval`）                   | ✅   |
+| DAG 并发编排           | `src/dag/`（plan/scheduler/task-runner）+ `dag run` CLI          | ✅   |
+| RBAC 权限治理          | `src/auth/`（rbac/policy-source）+ `--actor-policy`              | ✅   |
+| 企业审计导出           | `src/audit/`（query/export）+ `audit export` CLI                 | ✅   |
+| 主动事件监测           | trigger/watch/guardrail + 原子 checkpoint 跨重启恢复             | ✅   |
+| 外部事件与回写闭环     | 签名 Webhook/cursor Poller + 幂等 dispatcher + PR/评论回写       | ✅   |
+| 有界多 Agent 协商      | `src/negotiation/` + DAG Artifact mismatch + `DecisionRecord` L3 | ✅   |
+| 自我评估与质量回馈     | `src/quality/` + `run.quality` + L3 教训 + 报告质量面板          | ✅   |
+| 实时视图 / 自由协商    | 本轮明确非目标                                                   | —    |
 
 ## 7. 演进路线
 

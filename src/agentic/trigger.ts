@@ -6,6 +6,8 @@ import type {
   TriggerDecision,
   TriggerRule,
 } from "./types.js";
+import type { AgenticTriggerCheckpoint } from "./state.js";
+import { FatalFailure } from "../core/errors.js";
 
 export interface AgenticTriggerEngineOptions {
   readonly config: AgenticConfig;
@@ -22,6 +24,7 @@ interface PendingEvent {
 export class AgenticTriggerEngine {
   readonly #config: AgenticConfig;
   readonly #repositories: ReadonlySet<string>;
+  readonly #rules: ReadonlyMap<string, TriggerRule>;
   readonly #clock: () => number;
   readonly #seenEvents = new Map<string, number>();
   readonly #lastTriggered = new Map<string, { readonly at: number; readonly requestId: string }>();
@@ -32,7 +35,84 @@ export class AgenticTriggerEngine {
   public constructor(options: AgenticTriggerEngineOptions) {
     this.#config = options.config;
     this.#repositories = new Set(options.config.repositories);
+    this.#rules = new Map(options.config.rules.map((rule) => [rule.id, rule]));
     this.#clock = options.clock ?? Date.now;
+  }
+
+  public checkpoint(): AgenticTriggerCheckpoint {
+    const record = <Value>(values: ReadonlyMap<string, Value>): Readonly<Record<string, Value>> =>
+      Object.fromEntries([...values].sort(([left], [right]) => left.localeCompare(right)));
+    return {
+      seenEvents: record(this.#seenEvents),
+      lastTriggered: record(this.#lastTriggered),
+      pending: [...this.#pending.values()]
+        .sort((left, right) => left.key.localeCompare(right.key))
+        .map((entry) => ({
+          key: entry.key,
+          ruleId: entry.rule.id,
+          event: entry.event,
+          notBefore: entry.notBefore,
+        })),
+      dailyCounts: record(this.#dailyCounts),
+      recentRuns: [...this.#recentRuns].sort((left, right) => left - right),
+    };
+  }
+
+  public restore(checkpoint: AgenticTriggerCheckpoint): void {
+    this.#seenEvents.clear();
+    this.#lastTriggered.clear();
+    this.#pending.clear();
+    this.#dailyCounts.clear();
+    this.#recentRuns = [...checkpoint.recentRuns];
+    for (const [eventId, expiresAt] of Object.entries(checkpoint.seenEvents)) {
+      this.#seenEvents.set(eventId, expiresAt);
+    }
+    for (const [key, value] of Object.entries(checkpoint.lastTriggered)) {
+      const ruleId = key.split("\u0000", 1)[0] ?? "";
+      if (this.#rules.get(ruleId)?.enabled !== true) {
+        throw new FatalFailure(`Agentic checkpoint references unknown rule ${ruleId}`);
+      }
+      this.#lastTriggered.set(key, value);
+    }
+    for (const entry of checkpoint.pending) {
+      const rule = this.#rules.get(entry.ruleId);
+      if (rule === undefined || !rule.enabled) {
+        throw new FatalFailure(`Agentic checkpoint references unknown rule ${entry.ruleId}`);
+      }
+      if (objectKey(rule.id, entry.event) !== entry.key) {
+        throw new FatalFailure(
+          `Agentic checkpoint pending key does not match rule ${entry.ruleId}`,
+        );
+      }
+      this.#pending.set(entry.key, {
+        key: entry.key,
+        rule,
+        event: entry.event,
+        notBefore: entry.notBefore,
+      });
+    }
+    for (const [day, count] of Object.entries(checkpoint.dailyCounts)) {
+      this.#dailyCounts.set(day, count);
+    }
+    this.prune(this.#clock());
+  }
+
+  public assertRestorableDecision(
+    decision: Extract<TriggerDecision, { readonly kind: "TRIGGER" }>,
+  ): void {
+    const rule = this.#rules.get(decision.ruleId);
+    if (rule === undefined || !rule.enabled) {
+      throw new FatalFailure(
+        `Agentic checkpoint dispatch retry references unknown rule ${decision.ruleId}`,
+      );
+    }
+    const triggeredAt = Date.parse(decision.request.triggeredAt);
+    const expected = requestFor(decision.event, rule, triggeredAt);
+    if (!sameRequest(expected, decision.request)) {
+      throw new FatalFailure(
+        `Agentic checkpoint dispatch retry does not match rule ${decision.ruleId}`,
+      );
+    }
   }
 
   public ingest(event: DevelopmentEvent): TriggerDecision {
@@ -144,7 +224,54 @@ export class AgenticTriggerEngine {
     for (const day of this.#dailyCounts.keys()) {
       if (day !== currentDay) this.#dailyCounts.delete(day);
     }
+    for (const [key, triggered] of this.#lastTriggered) {
+      const ruleId = key.split("\u0000", 1)[0] ?? "";
+      const cooldown = this.#rules.get(ruleId)?.cooldownMs;
+      if (cooldown === undefined || now >= triggered.at + cooldown) {
+        this.#lastTriggered.delete(key);
+      }
+    }
   }
+}
+
+function sameRequest(left: AgenticRunRequest, right: AgenticRunRequest): boolean {
+  return (
+    left.id === right.id &&
+    left.repository === right.repository &&
+    left.requirement === right.requirement &&
+    left.priority === right.priority &&
+    left.ruleId === right.ruleId &&
+    left.triggeredAt === right.triggeredAt &&
+    sameOrigin(left.origin, right.origin) &&
+    left.sourceEventIds.length === right.sourceEventIds.length &&
+    left.sourceEventIds.every((eventId, index) => eventId === right.sourceEventIds[index])
+  );
+}
+
+function sameOrigin(
+  left: AgenticRunRequest["origin"],
+  right: AgenticRunRequest["origin"],
+): boolean {
+  const leftContextKeys = Object.keys(left.context).sort();
+  const rightContextKeys = Object.keys(right.context).sort();
+  return (
+    left.source === right.source &&
+    left.type === right.type &&
+    left.object.kind === right.object.kind &&
+    left.object.id === right.object.id &&
+    left.object.title === right.object.title &&
+    left.object.url === right.object.url &&
+    leftContextKeys.length === rightContextKeys.length &&
+    leftContextKeys.every((key, index) => {
+      if (key !== rightContextKeys[index]) return false;
+      const leftValue = left.context[key];
+      const rightValue = right.context[key];
+      return Array.isArray(leftValue) && Array.isArray(rightValue)
+        ? leftValue.length === rightValue.length &&
+            leftValue.every((value, valueIndex) => value === rightValue[valueIndex])
+        : leftValue === rightValue;
+    })
+  );
 }
 
 function matches(rule: TriggerRule, event: DevelopmentEvent): boolean {
@@ -172,6 +299,12 @@ function requestFor(event: DevelopmentEvent, rule: TriggerRule, now: number): Ag
     ruleId: rule.id,
     sourceEventIds: [event.id],
     triggeredAt: new Date(now).toISOString(),
+    origin: {
+      source: event.source,
+      type: event.type,
+      object: event.object,
+      context: event.context,
+    },
   };
 }
 

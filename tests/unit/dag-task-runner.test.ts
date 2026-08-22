@@ -30,7 +30,26 @@ it("adapts a DAG task to a child run with parent and task indexes", async () => 
               repo: { path: options.repoPath, branch: `forgemind/${options.runId ?? "missing"}` },
               plan: null,
               architecture: null,
-              artifacts: [],
+              artifacts: [
+                {
+                  path: "src/api.ts",
+                  kind: "source",
+                  stage: "CODE",
+                  summary: "Initial API contract",
+                },
+                {
+                  path: "architecture.md",
+                  kind: "architecture",
+                  stage: "ARCH",
+                  summary: "Architecture",
+                },
+                {
+                  path: "src/api.ts",
+                  kind: "source",
+                  stage: "CODE",
+                  summary: "Final API contract",
+                },
+              ],
               gates: [],
               meta: {
                 attempt: { stage: "PLAN", count: 1 },
@@ -62,6 +81,14 @@ it("adapts a DAG task to a child run with parent and task indexes", async () => 
     assert.equal(received.parentRunId, "parent");
     assert.equal(received.taskId, "backend");
     assert.equal(received.requirement, "Add API");
+    assert.deepEqual(result.artifacts, [
+      {
+        path: "src/api.ts",
+        kind: "source",
+        stage: "CODE",
+        summary: "Final API contract",
+      },
+    ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

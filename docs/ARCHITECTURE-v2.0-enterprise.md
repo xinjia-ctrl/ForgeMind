@@ -1,8 +1,8 @@
 # ForgeMind 架构设计文档（ADR）— 企业平台（v2.0）
 
 > 迭代：v2.0（第八轮，从研发工具到企业平台）
-> 前置：v1.0 DAG 内核已实现（`src/dag/`，73/73 测试通过；Web 工作台 V3 进行中）
-> 状态：I2 RBAC 内核与 I3 只读查询/导出已实现；I1 企业集成、I3 工作台面板规划中（对齐 `docs/PRD-v2.0-enterprise.md`）
+> 前置：v1.0 DAG 内核已实现；实时 Web 工作台未纳入 v3.0 交付范围
+> 状态：I1 企业集成（最终落点 `src/agentic/`）、I2 RBAC、I3 只读查询/导出已实现；实时工作台为非目标
 > 技术栈：TypeScript / Node，零运行时第三方依赖（企业集成走标准 webhook + REST，OIDC 为 P1 接缝）
 
 ---
@@ -32,11 +32,13 @@
 外部系统（GitHub / Jira / CI）
       ▲  │ webhook / REST
       │  ▼
-src/integrations/（新增，I1）
-  ├─ webhook.ts    # 事件接收（挂载到工作台 http server）
-  ├─ jira.ts       # 拉取 issue 需求 / 回写评论
-  ├─ github.ts     # 创建 PR / 评论（消费 v1.0 PRCandidate）
-  └─ ci.ts         # 触发 CI（最小路径）
+src/agentic/（I1 最终实现）
+  ├─ webhook.ts    # GitHub/Jira/CI HMAC + Node HTTP handler
+  ├─ jira.ts       # JQL Poller / Issue 评论
+  ├─ github.ts     # Workflow Poller / PR / Issue 评论
+  ├─ ci.ts         # 通用 CI PollSource / 状态回传
+  ├─ dispatcher.ts # 幂等 Run/DAG 调度
+  └─ feedback.ts   # PR 与来源评论回写
 
 src/auth/（新增，I2）                    src/audit/（新增，I3）
   ├─ types.ts      角色/作用域              ├─ query.ts   按人/仓库/时间过滤
@@ -47,26 +49,26 @@ src/auth/（新增，I2）                    src/audit/（新增，I3）
 ApprovalGateway（v0.4 接口不变）→ request(action, { actor, role })
        │  风险等级 → 角色映射
        ▼
-EventLog v1.4：+ actor/role 于 approval.*；+ integration.called
+EventLog：+ actor/role 于 approval.*；+ development.received / trigger.decided
        ▼
-Web 工作台（v1.0 V3，复用）→ 扩权限分层 + 审计面板
+离线报告 + audit query/export CLI
 ```
 
 **核心不变**：Orchestrator / DAG 调度器 / ToolPolicy / 沙箱 / LayeredMemory / 报告管线（v0.2–v1.0 全部原样）。
 
 ---
 
-## 3. 模块边界（新增）
+## 3. 模块边界（最终落点）
 
 ```
 src/
-├── integrations/          # 新增：企业系统适配器（I1）
-│   ├── types.ts           # Integration / WebhookPayload 接口
-│   ├── webhook.ts         # webhook 接收与鉴权
-│   ├── jira.ts            # Jira 适配器（读 issue / 回写评论）
-│   ├── github.ts          # GitHub 适配器（创建 PR / 评论）
-│   ├── ci.ts              # CI 触发（最小路径）
-│   └── index.ts
+├── agentic/               # 企业事件接入 + 主动闭环（I1）
+│   ├── webhook.ts         # GitHub/Jira/CI HMAC 与 bounded HTTP handler
+│   ├── jira.ts            # Jira Poller / 评论
+│   ├── github.ts          # GitHub Poller / PR / 评论
+│   ├── ci.ts              # 通用 CI Poller / 回传
+│   ├── dispatcher.ts      # 持久幂等 Run/DAG 调度
+│   └── feedback.ts        # 分支发布、PR 与来源评论
 ├── auth/                  # 新增：RBAC（I2）
 │   ├── types.ts           # Role(viewer/developer/approver/admin) / Scope(仓库/团队)
 │   ├── rbac.ts            # 权限判定矩阵（纯函数）
@@ -74,7 +76,7 @@ src/
 ├── audit/                 # 新增：审计报表（I3）
 │   ├── query.ts           # 只读索引 + 时间窗口过滤
 │   └── export.ts          # CSV/JSON 导出
-└── workspace/             # v1.0 V3（进行中）：复用，扩权限分层 + 审计面板
+└── report/                # EventLog 的离线可视化投影
 ```
 
 ---
@@ -179,14 +181,14 @@ interface Scope {
 
 ## 9. 测试策略
 
-| 里程碑      | 测试落点                                                                           | 形态                                   |
-| ----------- | ---------------------------------------------------------------------------------- | -------------------------------------- |
-| I1 集成     | issue 拉取 → Run → PR 创建 + 评论回写闭环、webhook 鉴权、`integration.called` 落盘 | e2e（GitHub/Jira 用 HTTP mock 服务器） |
-| I2 RBAC     | 权限矩阵全分支（四角色 × 三风险）、deny-by-default、未授权拒绝入审计               | 单元测试（纯函数矩阵）                 |
-| I3 审计     | 按人/仓库/时间过滤、导出 CSV/JSON 与面板同源、时间窗口限制                         | 单元 + 集成测试                        |
-| I4/I5（P1） | 配额判定、workspace 隔离                                                           | 视预算                                 |
+| 里程碑      | 测试落点                                                              | 形态                                   |
+| ----------- | --------------------------------------------------------------------- | -------------------------------------- |
+| I1 集成     | issue 拉取 → Run → PR 创建 + 评论回写闭环、webhook 鉴权、主动事件审计 | e2e（GitHub/Jira 用 HTTP mock 服务器） |
+| I2 RBAC     | 权限矩阵全分支（四角色 × 三风险）、deny-by-default、未授权拒绝入审计  | 单元测试（纯函数矩阵）                 |
+| I3 审计     | 按人/仓库/时间过滤、导出 CSV/JSON、报告同源投影、时间窗口限制         | 单元 + 集成测试                        |
+| I4/I5（P1） | 配额判定、workspace 隔离                                              | 视预算                                 |
 
-回归要求：`npm run check` + 既有 73 测试 + 本轮新增全部通过。
+回归要求：`npm run check` 全门禁通过；当前登记 151 项测试。
 
 ---
 
@@ -204,9 +206,9 @@ interface Scope {
 
 | 里程碑      | 架构动作                                                                                       |
 | ----------- | ---------------------------------------------------------------------------------------------- |
-| I1          | `integrations/`（webhook + jira + github + ci）+ `integration.called` 事件                     |
+| I1          | ✅ `agentic/`（签名 webhook + GitHub/Jira/CI Poller + 幂等 dispatcher + PR/评论回写）          |
 | I2          | ✅ `auth/`（rbac 纯函数 + policy-source）+ ApprovalGateway 角色上下文 + 事件加 actor/role/risk |
-| I3          | 🔄 `audit/`（有界 query + CSV/JSON export + CLI 已实现）；工作台审计面板待 V3                  |
+| I3          | ✅ `audit/`（有界 query + CSV/JSON export + CLI）；实时工作台保持非目标                        |
 | I4/I5（P1） | 配额治理 / 多租户 workspace 隔离 / OIDC                                                        |
 
 ## 12. 与既有架构的衔接

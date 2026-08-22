@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { errorMessage, HardFailure } from "../core/errors.js";
 import { assertValidRunId, type EventLog } from "../core/event-log.js";
+import type { ArtifactRef } from "../core/types.js";
+import { persistDecisionRecord, type DecisionRecordStore } from "../negotiation/record.js";
+import { detectArtifactMismatch } from "../negotiation/triggers.js";
+import type {
+  DecisionRecord,
+  NegotiationArtifact,
+  NegotiationCoordinator,
+} from "../negotiation/types.js";
 import { validateDagTasks } from "./plan.js";
 import type {
   DagResult,
@@ -15,13 +23,22 @@ export interface DagSchedulerOptions {
   readonly parentRunId: string;
   readonly taskRunner: TaskRunner;
   readonly eventLog?: EventLog;
+  readonly negotiation?: NegotiationCoordinator;
+  readonly memory?: DecisionRecordStore;
   readonly maxConcurrency?: number;
+}
+
+interface CompletedTask {
+  readonly result: DagTaskResult;
+  readonly artifacts: readonly ArtifactRef[];
 }
 
 export class DagScheduler {
   readonly #parentRunId: string;
   readonly #taskRunner: TaskRunner;
   readonly #eventLog: EventLog | undefined;
+  readonly #negotiation: NegotiationCoordinator | undefined;
+  readonly #memory: DecisionRecordStore | undefined;
   readonly #maxConcurrency: number;
 
   public constructor(options: DagSchedulerOptions) {
@@ -29,6 +46,8 @@ export class DagScheduler {
     this.#parentRunId = options.parentRunId;
     this.#taskRunner = options.taskRunner;
     this.#eventLog = options.eventLog;
+    this.#negotiation = options.negotiation;
+    this.#memory = options.memory;
     this.#maxConcurrency = options.maxConcurrency ?? 4;
     if (!Number.isInteger(this.#maxConcurrency) || this.#maxConcurrency < 1) {
       throw new HardFailure("maxConcurrency must be a positive integer");
@@ -40,7 +59,10 @@ export class DagScheduler {
     const byId = new Map(tasks.map((task) => [task.taskId, task]));
     const results = new Map<string, DagTaskResult>();
     const pending = new Set(tasks.map((task) => task.taskId));
-    const running = new Map<string, Promise<DagTaskResult>>();
+    const running = new Map<string, Promise<CompletedTask>>();
+    const artifacts: NegotiationArtifact[] = [];
+    const negotiatedPaths = new Set<string>();
+    const decisionRecords: DecisionRecord[] = [];
 
     while (pending.size > 0 || running.size > 0) {
       await this.propagateBlocked(tasks, pending, results);
@@ -59,8 +81,17 @@ export class DagScheduler {
       }
       if (running.size === 0) break;
       const completed = await Promise.race(running.values());
-      running.delete(completed.taskId);
-      results.set(completed.taskId, completed);
+      running.delete(completed.result.taskId);
+      results.set(completed.result.taskId, completed.result);
+      if (completed.result.status === "SUCCEEDED") {
+        artifacts.push(
+          ...completed.artifacts.map((artifact) => ({
+            taskId: completed.result.taskId,
+            artifact,
+          })),
+        );
+        await this.negotiateArtifactMismatches(artifacts, negotiatedPaths, decisionRecords);
+      }
     }
 
     const orderedResults = tasks.map((task) => {
@@ -79,8 +110,38 @@ export class DagScheduler {
       parentRunId: this.#parentRunId,
       status,
       tasks: orderedResults,
+      decisionRecords,
       prList: status === "SUCCEEDED" ? prCandidates(tasks, orderedResults, byId) : [],
     };
+  }
+
+  private async negotiateArtifactMismatches(
+    artifacts: readonly NegotiationArtifact[],
+    negotiatedPaths: Set<string>,
+    records: DecisionRecord[],
+  ): Promise<void> {
+    if (this.#negotiation === undefined) return;
+    const paths = [
+      ...new Set(
+        artifacts.map((entry) => entry.artifact.path).filter((path) => !negotiatedPaths.has(path)),
+      ),
+    ].sort((left, right) => left.localeCompare(right));
+    for (const path of paths) {
+      const evidence = detectArtifactMismatch(
+        artifacts.filter((entry) => entry.artifact.path === path),
+      );
+      if (evidence === null) continue;
+      negotiatedPaths.add(path);
+      const negotiation = await this.#negotiation.negotiate({
+        runId: this.#parentRunId,
+        ...evidence,
+      });
+      if (negotiation.decisionRecord === null) continue;
+      records.push(negotiation.decisionRecord);
+      if (this.#memory !== undefined) {
+        await persistDecisionRecord(this.#memory, negotiation.decisionRecord);
+      }
+    }
   }
 
   private async propagateBlocked(
@@ -125,7 +186,7 @@ export class DagScheduler {
     }
   }
 
-  private async execute(task: DagTask): Promise<DagTaskResult> {
+  private async execute(task: DagTask): Promise<CompletedTask> {
     const runId = childRunId(this.#parentRunId, task.taskId);
     await this.#eventLog?.append({
       type: "task.started",
@@ -143,27 +204,39 @@ export class DagScheduler {
     } catch (error) {
       const summary = errorMessage(error);
       await this.recordFailure(task, runId, summary);
-      return { taskId: task.taskId, runId, repo: task.repo, status: "FAILED", summary };
+      return {
+        result: { taskId: task.taskId, runId, repo: task.repo, status: "FAILED", summary },
+        artifacts: [],
+      };
     }
     if (execution.runId !== runId) {
       const summary = `Task runner returned unexpected run id ${execution.runId}; expected ${runId}`;
       await this.recordFailure(task, runId, summary);
-      return { taskId: task.taskId, runId, repo: task.repo, status: "FAILED", summary };
+      return {
+        result: { taskId: task.taskId, runId, repo: task.repo, status: "FAILED", summary },
+        artifacts: [],
+      };
     }
     if (execution.status === "SUCCEEDED" && execution.branch.trim().length === 0) {
       const summary = "Successful task runner result must include a branch";
       await this.recordFailure(task, runId, summary);
-      return { taskId: task.taskId, runId, repo: task.repo, status: "FAILED", summary };
+      return {
+        result: { taskId: task.taskId, runId, repo: task.repo, status: "FAILED", summary },
+        artifacts: [],
+      };
     }
     if (execution.status !== "SUCCEEDED") {
       await this.recordFailure(task, execution.runId, execution.summary);
       return {
-        taskId: task.taskId,
-        runId: execution.runId,
-        repo: task.repo,
-        status: "FAILED",
-        branch: execution.branch,
-        summary: execution.summary,
+        result: {
+          taskId: task.taskId,
+          runId: execution.runId,
+          repo: task.repo,
+          status: "FAILED",
+          branch: execution.branch,
+          summary: execution.summary,
+        },
+        artifacts: [],
       };
     }
     await this.#eventLog?.append({
@@ -179,12 +252,15 @@ export class DagScheduler {
       },
     });
     return {
-      taskId: task.taskId,
-      runId: execution.runId,
-      repo: task.repo,
-      status: "SUCCEEDED",
-      branch: execution.branch,
-      summary: execution.summary,
+      result: {
+        taskId: task.taskId,
+        runId: execution.runId,
+        repo: task.repo,
+        status: "SUCCEEDED",
+        branch: execution.branch,
+        summary: execution.summary,
+      },
+      artifacts: execution.artifacts,
     };
   }
 

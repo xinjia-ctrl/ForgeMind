@@ -189,6 +189,43 @@ describe("layered memory", () => {
     }
   });
 
+  it("stores quality assessments as deterministic project lessons", async () => {
+    const repository = await mkdtemp(path.join(os.tmpdir(), "forgemind-quality-memory-"));
+    try {
+      const memory = new ProjectMemory({ repositoryRoot: repository, writeEnabled: true });
+      const quality = {
+        runId: "quality-memory-run",
+        requirement: "Add payment boundary validation",
+        status: "SUCCEEDED" as const,
+        score: 74,
+        grade: "NEEDS_ATTENTION" as const,
+        gatePassRate: 66.67,
+        gatesPassed: 2,
+        gatesTotal: 3,
+        reworkRounds: 1,
+        testPassRate: 100,
+        testsPassed: 1,
+        testsTotal: 1,
+        codeCoveragePercent: 84.5,
+        coverageSource: "test-output" as const,
+        recommendations: ["Address recurring gate feedback earlier."],
+      };
+      await memory.rememberQuality(quality);
+      await memory.rememberQuality(quality);
+
+      const recalled = await memory.recall("quality rework", { scopes: ["project"] });
+      assert.equal(recalled.length, 1);
+      assert.match(recalled[0]?.content ?? "", /NEEDS_ATTENTION \(74\/100\)/);
+      assert.match(recalled[0]?.content ?? "", /rework rounds 1/);
+      const document = JSON.parse(
+        await readFile(path.join(repository, ".forgemind/memory/lessons.json"), "utf8"),
+      ) as { entries: unknown[] };
+      assert.equal(document.entries.length, 1);
+    } finally {
+      await rm(repository, { recursive: true, force: true });
+    }
+  });
+
   it("fails fast instead of overwriting a malformed project memory document", async () => {
     const repository = await mkdtemp(path.join(os.tmpdir(), "forgemind-invalid-memory-"));
     try {

@@ -1,9 +1,9 @@
 # ForgeMind 架构设计文档（ADR）
 
-> 版本：v3.0（对齐 `docs/PRD.md` v3.0，全能力已实现，114 个测试通过）
+> 版本：v3.0（对应 npm `3.0.0`，对齐 `docs/PRD.md`，全能力已实现，151 个测试用例登记）
 > 状态：已实现
 > 技术栈：TypeScript / Node（>=22），单一进程、运行时零第三方依赖（无 DB / MQ / 框架）
-> 演进总览：v0.2 闭环 → v0.3 可观测 → v0.4 安全 → v0.5 记忆/提示词 → v1.0 DAG/多仓库 → v2.0 企业集成/RBAC/审计 → v3.0 主动监测 + 协商
+> 演进总览：v0.2 闭环 → v0.3 可观测 → v0.4 安全 → v0.5 记忆/提示词 → v1.0 DAG/多仓库 → v2.0 企业集成/RBAC/审计 → v3.0 主动监测/有界协商/语义记忆/质量回馈
 
 ---
 
@@ -40,6 +40,12 @@ GitHub、Jira、CI 与内部审批事件统一转换为 `DevelopmentEvent`。触
 **ADR-21：协商是有界结构化协议，不是自由对话。**
 协商 = `Proposal → Counter → Decision` 三轮有界协议，产出结构化 `DecisionRecord`；无共识/超时 → 升级人类审批。自由对话违背"编排者决策"与可审计性，明确不做。
 
+**ADR-22：L4 语义记忆延续零依赖底线——EmbeddingProvider 可插拔接缝 + 默认自研词法检索。**
+`semantic` scope 实装为 `SemanticMemory`（`src/memory/semantic-memory.ts`）：检索通过 `EmbeddingProvider` 接口注入，默认提供零运行时依赖的确定性词法向量 + BM25（NFKC 归一化、英文复数/大小写归并、`stableHash` 有符号 hash），外部向量服务可作为可选 provider 接入。语义检索的写仍走确定性投影（ADR-7），LLM 不参与记忆生成；`repositoryRoots` 是跨项目召回的显式授权边界，CLI `--memory` 仅授权当前仓库。
+
+**ADR-23：主动层以单一原子 checkpoint 保持跨重启一致性。**
+`FileAgenticStateStore` 同步保存 poller cursor、事件 TTL 去重、对象冷却、pending、滑动窗口限流、每日配额与 dispatch retry。每个 dispatch 在外部调用前先落盘，成功后才清除；cursor 只在批次内事件都处理完成后提交。恢复语义为 at-least-once，稳定 `ruleId:eventId` 必须作为下游幂等键。损坏、超限或配置漂移状态 fail-closed。
+
 ---
 
 ## 2. 架构总览
@@ -59,7 +65,7 @@ CLI / API（src/runtime/cli.ts / src/runtime/run.ts）
   │ 校验 run/repo/测试配置 → 建分支 forgemind/<runId> → 建 EventLog
   ▼
 DAG 内核（src/dag/）—— 跨仓库多任务（v1.0）
-  DagPlanner → DagScheduler（并发 + 依赖）→ ForgeMindTaskRunner（每任务一个 worktree）
+  DagPlanner → DagScheduler（并发 + 依赖 + Artifact mismatch 协商）→ ForgeMindTaskRunner（每任务一个 worktree）
   ▼（单任务或 DAG 子任务均进入）
 Orchestrator（src/core/orchestrator.ts）—— 唯一决策中枢，持有 Run 级状态机
   │  顺序推进阶段 + 门禁返工回路（≤ maxRework=3）
@@ -223,11 +229,12 @@ CREATED → RUNNING → SUCCEEDED | FAILED
 
 ```
 GitHub / Jira / CI / Approval timeout
-        │ webhook 共用入口：normalizeDevelopmentEvent
-        │ poller 兜底：DevelopmentEventPoller（带 cursor）
+        │ signed webhook：原始字节 HMAC → normalizeDevelopmentEvent
+        │ poller：GitHubWorkflow / JiraIssue / CI（带 cursor）
         ▼
 AgenticWatchService（watch.ts）
   │  development.received / trigger.decided → EventLog
+  │  FileAgenticStateStore → atomic checkpoint / restart recovery
   ▼
 AgenticTriggerEngine（trigger.ts）
   ├─ event TTL 去重（delivery id）
@@ -237,14 +244,22 @@ AgenticTriggerEngine（trigger.ts）
   ├─ 每日任务配额 / 全局滑动窗口限流 → DEFER 入 pending queue
   │     AgenticRunRequest（幂等 id = ruleId:eventId）
   ▼
-AgenticRunDispatcher（接缝）→ runDagForgeMind / runForgeMind
+ForgeMindAgenticRunDispatcher
+  │ FileAgenticDispatchStore：RUNNING / FAILED / COMPLETED
+  ├─ 单仓 → runForgeMind
+  └─ 多仓 → runDagForgeMind
   ▼
 agenticRunGovernance（guardrail.ts）：actor=agentic/developer、风险升级、工具/命令白名单交集
   ▼
 既有 RBAC → ApprovalGateway → ToolPolicy → Sandbox → EventLog / Memory
+  ▼
+AgenticFeedbackCoordinator → push branch → GitHub PR → GitHub/Jira/CI comment
 ```
 
-- **消费游标**（ADR-19）：`watch.ts` 中 cursor 仅在 poller 返回新 cursor 后更新；dispatch 失败保留稳定 request id 并优先重试（`pendingDispatchCount` 可观测）。
+- **消费游标与恢复**（ADR-19/23）：`watch.ts` 中 cursor 仅在 poller 返回新 cursor 且批次事件处理成功后更新；`state.ts` 原子保存 cursor、dedupe、cooldown、pending、rate/quota 与 dispatch retry。dispatch 失败保留稳定 request id 并在重启后优先重试（`pendingDispatchCount` 可观测）。
+- **入口鉴权**：`webhook.ts` 对未解析的原始字节计算 SHA-256 HMAC，常量时间比较后才解析；GitHub、Jira 与可配置 CI header 分别适配，Node handler 同时限制请求体大小。
+- **幂等执行**：`dispatcher.ts` 以 request 指纹和文件级独占 claim 持久化状态；明确失败以新 attempt 重试，已完成但回写失败只重试回写，歧义 RUNNING fail-closed。
+- **平台闭环**：`github.ts` / `jira.ts` / `ci.ts` 提供 Poller 与 REST 客户端；`feedback.ts` 推送独立分支、创建或复用 PR，并以隐藏 marker / idempotency key 防重复评论。禁止从 `test` 创建 PR，且没有自动 merge 路径。
 - **配置**（`src/agentic/config.ts`）：严格解析，拒绝未知字段、重复 rule id、rule 指向白名单外仓库、越界配额。
 - **护栏**（ADR-20）：`agenticRunGovernance()` 生成可直接展开进 `RunOptions` 的 actor、风险变换与白名单；`ScopedToolExecutor` 在 RBAC/ApprovalGateway 前应用风险升级，升级后的风险进入 `approval.*` 审计。
 - **不越权**：主动 Run 与手动 Run 走同一条执行链，审批、沙箱、记忆行为完全一致。
@@ -274,7 +289,7 @@ createDecisionRecord（record.ts）→ persistDecisionRecord → L3 decisions.js
 
 - **Token 预算**：每场协商 12K input / 3K output，每轮输出上限 1K tokens，超时默认 120s。
 - **升级兜底**：无共识或超时 → `ESCALATED`/`TIMED_OUT`，复用 v0.4 `ApprovalGateway`，审批通过才产出 `DecisionRecord`；审批被拒则协商不生效，Run 按既有逻辑处理（ARCH 阶段失败 / 返工）。
-- **集成**：Orchestrator 在 ARCH 冲突与 REVIEW 连续驳回两个触发点调用；`decision-record` 进入 L3 项目记忆，后续 Run 可检索引用（"这个需求上次因为方案 X 争议升级过"）。
+- **集成**：Orchestrator 在 ARCH 冲突与 REVIEW 连续驳回时调用；DagScheduler 收集成功子任务的最终 CODE 产物，在后继任务启动前检测同路径语义冲突并调用。成功协商的 `DecisionRecord` 会进入 DAG 结果，并在启用记忆时写入各任务 worktree 的 L3 项目记忆，供后续 Run 检索引用。
 
 ---
 
@@ -385,17 +400,20 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 
 ## 13. Memory 设计（默认关闭）
 
-| 层          | 载体                                         | 当前行为                                                  |
-| ----------- | -------------------------------------------- | --------------------------------------------------------- |
-| L1 working  | 不可变 `TaskContext` + 阶段产物              | 所有阶段已有，生命周期为单 Run                            |
-| L2 episodic | `<git-dir>/forgemind/runs/*.jsonl`           | 按需求关键词与运行结果检索历史轨迹                        |
-| L3 project  | `.forgemind/memory/{decisions,lessons}.json` | ARCH/门禁/协商决策确定性投影，按 tag/关键词召回           |
-| L4 semantic | `null`                                       | 接口占位（`MEMORY_SCOPES` 含 semantic），容器跳过且不报错 |
+| 层          | 载体                                         | 当前行为                                                          |
+| ----------- | -------------------------------------------- | ----------------------------------------------------------------- |
+| L1 working  | 不可变 `TaskContext` + 阶段产物              | 所有阶段已有，生命周期为单 Run                                    |
+| L2 episodic | `<git-dir>/forgemind/runs/*.jsonl`           | 按需求关键词与运行结果检索历史轨迹                                |
+| L3 project  | `.forgemind/memory/{decisions,lessons}.json` | ARCH/门禁/协商/质量评估确定性投影，按 tag/关键词召回              |
+| L4 semantic | `.forgemind/memory/` 只读语料（L3 文档）     | `SemanticMemory`：默认词法向量 + BM25，`EmbeddingProvider` 可插拔 |
 
-- `MemoryProvider` 统一 `remember / rememberGate? / rememberDecisionRecord? / recall(query, options)` 接口；`LayeredMemory` 按 scope 聚合、限流排序。
+- `MemoryProvider` 统一 `remember / rememberGate? / rememberDecisionRecord? / rememberQuality? / recall(query, options)` 接口；`LayeredMemory` 按 scope 聚合、限流排序。
 - 默认注入 `NoopMemoryProvider`；只有 CLI `--memory` 或 API 显式传入 Provider 才启用。
 - PLAN/ARCH 在 `BaseAgent` 生命周期内只读注入召回结果；项目记忆写入需 `--memory` 确认，运行入口将 `.forgemind/memory/` 加入 Git 本地 exclude。
 - 协商 `DecisionRecord` 经 `rememberDecisionRecord` 写入 L3 `decisions.json`（tag: negotiation/trigger/topic）。
+- A4 在 `run.finished` 后从事件事实源确定性生成 `run.quality`（门禁通过率、返工轮次、TEST 通过率、显式覆盖率、评分/等级/建议）；启用记忆时经 `rememberQuality` 写入 L3 `lessons.json`。质量条目包含原需求，后续相关 Run 可召回并只读注入 PLAN/ARCH。
+- 代码覆盖率只接受 `FORGEMIND_COVERAGE=<0-100>` 显式测试输出；否则为 `unavailable`，报告不猜测覆盖率。
+- L4 `SemanticMemory` 只读检索 L3 文档（`decisions.json` / `lessons.json`）：词条经 NFKC 归一化、大小写与英文复数归并，得分 = `BM25(0.6) + cosine(0.4)`；默认 `LexicalEmbeddingProvider` 为确定性 `stableHash` 词法向量（维度 512，可配置），也可注入内置 `OpenAICompatibleEmbeddingProvider` 直连外部 `/embeddings`。外部向量必须匹配显式维度且全部为有限值，否则 `StageFailure`。默认维度 512、并发嵌入 8、单文档索引上限 100K 字符、语料上限 10,000 条（超限 `HardFailure`）。`repositoryRoots` 为跨项目召回授权边界；`memory.recalled` 事件记录 `semantic` 命中层与 `reason`（BM25/cosine/terms 依据）。
 - 记忆内容不参与控制流决策，也不修改用户代码。
 
 ---
@@ -425,11 +443,12 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 | `HardFailure`  | HARD  | 预算超限 / 权限 / 仓库不干净           | FAILED   |
 | `FatalFailure` | FATAL | 框架级（契约漂移、事件日志损坏）       | BLOCKED  |
 
-### 15.2 测试策略（`npm test` = build + `node --test`，114 个测试）
+### 15.2 测试策略（`npm test` = build + `node --test`，151 个测试）
 
-- **单元**：编排、安全、报告、分层记忆、损坏记忆 fail-fast、Prompt 资源/Schema、结构化能力降级、上下文排序、工作区检索、事件并发写入、DAG（plan/scheduler/task-runner）、RBAC/actor 策略、审计查询、agentic（normalize/trigger/watch/guardrail）、协商（protocol/triggers）。
+- **单元**：编排、安全、报告、分层记忆、损坏记忆 fail-fast、Prompt 资源/Schema、结构化能力降级、上下文排序、工作区检索、事件并发写入、DAG（plan/scheduler/task-runner）、RBAC/actor 策略、审计查询、agentic（normalize/trigger/watch/guardrail/webhook/poller/dispatcher/feedback）、协商（protocol/triggers）、语义记忆（词法/向量/跨仓库/失败关闭）。
 - **Golden**：`tests/golden/event-schema.snapshot.json` 锁定事件契约，防 Schema 漂移。
-- **E2E**：真实测试/commit/可复现性、审批拒绝与报告、双 Run 记忆召回、DAG 全链路、主动监测端到端。
+- **E2E**：真实测试/commit/可复现性、审批拒绝与报告、双 Run 记忆召回、DAG 全链路、签名 Webhook 到幂等 Run/PR/评论的主动闭环。
+- **Smoke**：真实文件 checkpoint + dispatch 失败重启恢复始终执行；真实容器、外部 Chat 和外部 Embedding 在配置环境执行，发布门禁缺配置即失败。
 - **Eval**：`npm run eval` 用 4 条代表性需求与 FakeProvider 输出 A/B 通过率、返工、越权调用与 token 成本。
 - **质量门禁**：`npm run check` 串行执行 TypeScript 严格检查、类型感知 ESLint、Prettier 检查与测试；`.github/workflows/ci.yml` 在 push / pull request 中运行同一门禁。
 
@@ -437,27 +456,27 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 
 ## 16. 已知问题与决策记录
 
-| #   | 问题                                                                             | 位置                                               | 严重度 | 处置                                                                        |
-| --- | -------------------------------------------------------------------------------- | -------------------------------------------------- | ------ | --------------------------------------------------------------------------- |
-| 1   | REVIEW input 预算 24K，但 diff 上限 72K 字节（≈18K token）+ 上下文开销，余量偏紧 | `src/core/agent-factory.ts` policyFor / budgets.ts | 低     | 超限已有安全兜底（diff 截断即驳回）；调参时优先提升预算或收紧 diff 上限。   |
-| 2   | 路径检查存在 TOCTOU（realpath 校验与 readFile 之间可换链）                       | `src/tools/path-safety.ts`                         | 低     | 本地可信场景可接受；沙箱用严格句柄化（O_NOFOLLOW / 沙箱 FS）消除。          |
-| 3   | 主动触发状态为进程内（去重/配额/cursor）                                         | `src/agentic/`                                     | 中     | 当前为库 API；跨重启持久化与 HTTP adapter 为下一迭代（对齐 PRD 演进路线）。 |
-| 4   | 协商收敛判定基于关键词重叠，极端场景可能误判                                     | `src/negotiation/protocol.ts`                      | 低     | 有界（≤3 轮）+ 超时升级兜底；判定仅作为"是否收敛"信号，最终人类可仲裁。     |
-| 5   | L4 语义记忆为接口占位                                                            | `src/memory/`                                      | 低     | 接缝已留（`EmbeddingProvider` 可插拔）；PRD 明确本轮非目标。                |
+| #   | 问题                                                                             | 位置                                               | 严重度 | 处置                                                                      |
+| --- | -------------------------------------------------------------------------------- | -------------------------------------------------- | ------ | ------------------------------------------------------------------------- |
+| 1   | REVIEW input 预算 24K，但 diff 上限 72K 字节（≈18K token）+ 上下文开销，余量偏紧 | `src/core/agent-factory.ts` policyFor / budgets.ts | 低     | 超限已有安全兜底（diff 截断即驳回）；调参时优先提升预算或收紧 diff 上限。 |
+| 2   | 路径检查存在 TOCTOU（realpath 校验与 readFile 之间可换链）                       | `src/tools/path-safety.ts`                         | 低     | 本地可信场景可接受；沙箱用严格句柄化（O_NOFOLLOW / 沙箱 FS）消除。        |
+| 3   | 文件幂等账本遇到进程崩溃留下 RUNNING 时无法自动判断外部 Run 是否已产生副作用     | `src/agentic/dispatcher.ts`                        | 中     | 保持 fail-closed，由运维依据 run id 对账；不盲目重跑。                    |
+| 4   | 协商收敛判定基于关键词重叠，极端场景可能误判                                     | `src/negotiation/protocol.ts`                      | 低     | 有界（≤3 轮）+ 超时升级兜底；判定仅作为"是否收敛"信号，最终人类可仲裁。   |
+| 5   | L4 默认词法向量对同义词/语义近义召回有限，跨语言召回弱                           | `src/memory/semantic-memory.ts`                    | 低     | 默认零依赖可接受；接续精度提升走 `EmbeddingProvider` 注入外部向量服务。   |
 
-**历轮已解决决策**：Git hooks 默认执行且可显式跳过；CODE 上下文 UTF-8 字节截断；`stage.failed.kind` 向后兼容；报告纯函数管线 + 2,000 条时间线边界；三态策略与审批网关统一执行链；容器沙箱与资源限制；本机降级显式可审计；L2/L3 记忆确定性投影 + 显式启用；Prompt 资源化与版本记录；原生结构化输出带能力降级；DAG 并发与 worktree 隔离；RBAC 与审计导出；主动监测三层护栏；有界协商与升级兜底。
+**历轮已解决决策**：Git hooks 默认执行且可显式跳过；CODE 上下文 UTF-8 字节截断；`stage.failed.kind` 向后兼容；报告纯函数管线 + 2,000 条时间线边界；三态策略与审批网关统一执行链；容器沙箱与资源限制；本机降级显式可审计；L2/L3 记忆确定性投影 + 显式启用；Prompt 资源化与版本记录；原生结构化输出带能力降级；DAG 并发与 worktree 隔离；RBAC 与审计导出；主动监测三层护栏与原子 checkpoint；签名 Webhook/cursor Poller/幂等 dispatcher/PR 与评论回写；有界协商与升级兜底；L4 语义记忆实装（`SemanticMemory` + 外部向量 Provider）。
 
 ---
 
 ## 17. 演进路线（对齐 PRD §7）
 
-| 阶段             | 架构动作                                         | 状态      |
-| ---------------- | ------------------------------------------------ | --------- |
-| Phase 1（MVP）   | 单条需求走通全链路                               | ✅ 已实现 |
-| Phase 2 可观测   | 静态离线报告 + 回放 + 复现签名                   | ✅ 已实现 |
-| Phase 3 生产级   | 沙箱/审批、DAG 并发、RBAC、审计                  | ✅ 已实现 |
-| Phase 4 长期记忆 | 项目 L2/L3 + 主动监测 + 协商沉淀                 | ✅ 已实现 |
-| 后续             | L4 语义检索、主动层持久化/HTTP adapter、实时视图 | ⏸ 规划中  |
+| 阶段             | 架构动作                                       | 状态           |
+| ---------------- | ---------------------------------------------- | -------------- |
+| Phase 1（MVP）   | 单条需求走通全链路                             | ✅ 已实现      |
+| Phase 2 可观测   | 静态离线报告 + 回放 + 复现签名                 | ✅ 已实现      |
+| Phase 3 生产级   | 沙箱/审批、DAG 并发、RBAC、审计                | ✅ 已实现      |
+| Phase 4 长期记忆 | 项目 L2/L3 + L4 语义检索 + 主动监测 + 协商沉淀 | ✅ 已实现      |
+| 扩展项           | 实时视图与 RUNNING 对账工具                    | — 非 v3.0 范围 |
 
 **明确不做（防过度设计）**：不引入 MQ、DB、图/事件引擎、Agent 自由对话拓扑。单进程、顺序执行、JSONL 落盘支撑演示闭环，且迁移路径清晰。
 
@@ -469,6 +488,6 @@ EventLog.load() → buildReportViewModel(events) → renderReportHtml(model) →
 - 可复现：`workflowSignature` 双 Run 一致性 ✅。
 - 报告时间线 / 门禁 / 失败 / 统计 / 离线：纯函数投影 + CLI e2e ✅。
 - 安全策略 / 审批 / 沙箱 / 资源限制 / 安全报告：回归保持 ✅。
-- L2/L3 记忆、Prompt 版本、结构化输出、相关性上下文、Eval：完整套件 + 4 场景评测 ✅。
-- DAG 并发、RBAC、审计导出、主动监测（`development.*`/`trigger.*` 事件）、协商（`negotiation.*` + DecisionRecord）：已实现 ✅。
-- 非目标（L4 语义记忆 / 实时视图 / 自由协商）：架构接缝已留，本轮不实现。
+- L2/L3/L4 记忆、Prompt 版本、结构化输出、相关性上下文、Eval：完整套件 + 4 场景评测 ✅。
+- DAG 并发、RBAC、审计导出、主动监测（签名入口 + Poller + 持久 checkpoint + 幂等 dispatcher + 回写）、协商（`negotiation.*` + DecisionRecord）、L4 语义记忆（默认词法 + 外部向量 Provider）：已实现 ✅。
+- 非目标（实时视图 / 自由协商）：明确不做；HTTP server 进程、凭据托管与仓库部署映射由宿主服务配置。

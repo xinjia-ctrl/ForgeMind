@@ -233,7 +233,9 @@ function isMissingFile(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
-function approvalGatewayFor(options: RunOptions): ApprovalGateway {
+export function approvalGatewayFor(
+  options: Pick<RunOptions, "approveAll" | "noApprove">,
+): ApprovalGateway {
   if (options.approveAll === true) return new AutoApprovalGateway();
   if (options.noApprove === true || !process.stdin.isTTY || !process.stdout.isTTY) {
     return new DenyApprovalGateway();

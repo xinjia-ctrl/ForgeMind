@@ -192,6 +192,51 @@ describe("report view model", () => {
     });
   });
 
+  it("projects the auditable run quality assessment", () => {
+    const report = buildReportViewModel([
+      event(1, "run.quality", {
+        runId: "quality-report-run",
+        requirement: "Improve report quality",
+        status: "SUCCEEDED",
+        score: 88,
+        grade: "GOOD",
+        gatePassRate: 75,
+        gatesPassed: 3,
+        gatesTotal: 4,
+        reworkRounds: 1,
+        testPassRate: 100,
+        testsPassed: 1,
+        testsTotal: 1,
+        codeCoveragePercent: 92.5,
+        coverageSource: "test-output",
+        recommendations: ["Address recurring review feedback earlier."],
+      }),
+    ]);
+
+    assert.deepEqual(report.quality, {
+      seq: 1,
+      ts: new Date(1_000).toISOString(),
+      status: "SUCCEEDED",
+      score: 88,
+      grade: "GOOD",
+      gatePassRate: 75,
+      gatesPassed: 3,
+      gatesTotal: 4,
+      reworkRounds: 1,
+      testPassRate: 100,
+      testsPassed: 1,
+      testsTotal: 1,
+      codeCoveragePercent: 92.5,
+      coverageSource: "test-output",
+      recommendations: ["Address recurring review feedback earlier."],
+    });
+    const timeline = report.timeline.flatMap((group) => group.events);
+    assert.deepEqual(
+      timeline.map((item) => [item.type, item.operation, item.outcome]),
+      [["run.quality", "GOOD", "88"]],
+    );
+  });
+
   it("projects approval events into a re-audited security panel", () => {
     const report = buildReportViewModel([
       event(1, "approval.requested", {

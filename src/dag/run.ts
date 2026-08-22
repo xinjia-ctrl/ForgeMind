@@ -5,6 +5,10 @@ import type { Actor, RiskLevel } from "../auth/types.js";
 import { HardFailure } from "../core/errors.js";
 import { assertValidRunId, EventLog } from "../core/event-log.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
+import { ProjectMemory } from "../memory/project-memory.js";
+import { ChatNegotiationTurnProvider, NegotiationProtocol } from "../negotiation/protocol.js";
+import type { DecisionRecordStore } from "../negotiation/record.js";
+import type { DecisionRecord } from "../negotiation/types.js";
 import type { ApprovalGateway } from "../policy/gateway.js";
 import type { ProcessRunner } from "../sandbox/types.js";
 import {
@@ -13,7 +17,7 @@ import {
   prepareTaskWorktree,
   type GitWorkspace,
 } from "../runtime/git-workspace.js";
-import { createRunId } from "../runtime/run.js";
+import { approvalGatewayFor, createRunId } from "../runtime/run.js";
 import { DagPlanner } from "./plan.js";
 import { DagScheduler } from "./scheduler.js";
 import { ForgeMindTaskRunner } from "./task-runner.js";
@@ -41,6 +45,10 @@ export interface DagRunOptions {
   readonly actor?: Actor;
   readonly team?: string;
   readonly approvalRisk?: RiskLevel;
+  readonly authorizationRepositories?: readonly string[];
+  readonly toolAllowlist?: readonly string[];
+  readonly commandAllowlist?: readonly (readonly string[])[];
+  readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
 }
 
 export interface DagTaskWorkspace {
@@ -59,22 +67,29 @@ export interface DagRunExecution {
 }
 
 export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExecution> {
+  if (options.approveAll === true && options.noApprove === true) {
+    throw new Error("approveAll and noApprove cannot both be enabled");
+  }
   const repositories = await inspectRepositories(options.repositories);
+  const authorizationRepositories = resolveAuthorizationRepositories(
+    repositories,
+    options.authorizationRepositories,
+  );
   await Promise.all(repositories.map((repository) => assertGitWorkspaceClean(repository.root)));
   if (options.actor !== undefined) {
-    for (const repository of repositories) {
+    for (const repository of authorizationRepositories) {
       if (
         !authorize(
           options.actor,
           {
-            repo: repository.root,
+            repo: repository,
             ...(options.team === undefined ? {} : { team: options.team }),
           },
           "run",
         )
       ) {
         throw new HardFailure(
-          `Actor ${options.actor.id} is not authorized to run in ${repository.root}`,
+          `Actor ${options.actor.id} is not authorized to run in ${repository}`,
         );
       }
     }
@@ -97,9 +112,60 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
   );
   const eventLog = await EventLog.create(parentEventsDirectory, parentRunId);
   const repositoriesByRoot = new Map(
-    repositories.map((repository) => [repository.root, repository] as const),
+    repositories.map(
+      (repository, index) =>
+        [
+          repository.root,
+          {
+            repository,
+            authorizationRepository:
+              authorizationRepositories[index] ?? failNoAuthorizationRepository(),
+          },
+        ] as const,
+    ),
   );
   const workspaces = new Map<string, DagTaskWorkspace>();
+  const decisionRecords: DecisionRecord[] = [];
+  const approvalGateway = options.approvalGateway ?? approvalGatewayFor(options);
+  const approvalContext =
+    options.actor === undefined
+      ? undefined
+      : {
+          actor: options.actor,
+          scope: {
+            repo: authorizationRepositories[0] ?? failNoAuthorizationRepository(),
+            ...(options.team === undefined ? {} : { team: options.team }),
+          },
+          risk: options.approvalRisk ?? ("high" as const),
+        };
+  const negotiation = new NegotiationProtocol({
+    eventLog,
+    proposal: new ChatNegotiationTurnProvider({
+      provider: options.provider,
+      model: options.model,
+      eventLog,
+    }),
+    counter: new ChatNegotiationTurnProvider({
+      provider: options.provider,
+      model: options.model,
+      eventLog,
+    }),
+    approvalGateway,
+    ...(approvalContext === undefined ? {} : { approvalContext }),
+  });
+  const memory: DecisionRecordStore | undefined =
+    options.memory === true
+      ? {
+          rememberDecisionRecord: async (record) => {
+            decisionRecords.push(record);
+            await Promise.all(
+              [...workspaces.values()].map((workspace) =>
+                persistWorkspaceDecision(workspace, record, eventLog),
+              ),
+            );
+          },
+        }
+      : undefined;
   const taskRunner = new ForgeMindTaskRunner({
     createRunOptions: async (task, context) => {
       const repository = repositoriesByRoot.get(task.repo);
@@ -107,7 +173,7 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
         throw new HardFailure(`Task ${task.taskId} targets unknown repository ${task.repo}`);
       }
       const workspace = await prepareTaskWorktree({
-        repositoryPath: repository.root,
+        repositoryPath: repository.repository.root,
         parentRunId: context.parentRunId,
         taskId: task.taskId,
         runId: context.runId,
@@ -115,10 +181,15 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
       });
       workspaces.set(task.taskId, {
         taskId: task.taskId,
-        repo: repository.root,
+        repo: repository.repository.root,
         root: workspace.root,
         branch: workspace.branch,
       });
+      if (options.memory === true) {
+        await Promise.all(
+          decisionRecords.map((record) => persistWorkspaceDecision(workspace, record, eventLog)),
+        );
+      }
       return {
         repoPath: workspace.root,
         preparedWorkspace: workspace,
@@ -138,7 +209,12 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
         ...(options.actor === undefined ? {} : { actor: options.actor }),
         ...(options.team === undefined ? {} : { team: options.team }),
         ...(options.approvalRisk === undefined ? {} : { approvalRisk: options.approvalRisk }),
-        authorizationRepo: repository.root,
+        authorizationRepo: repository.authorizationRepository,
+        ...(options.toolAllowlist === undefined ? {} : { toolAllowlist: options.toolAllowlist }),
+        ...(options.commandAllowlist === undefined
+          ? {}
+          : { commandAllowlist: options.commandAllowlist }),
+        ...(options.riskTransform === undefined ? {} : { riskTransform: options.riskTransform }),
       };
     },
   });
@@ -146,6 +222,8 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
     parentRunId,
     taskRunner,
     eventLog,
+    negotiation,
+    ...(memory === undefined ? {} : { memory }),
     ...(options.maxConcurrency === undefined ? {} : { maxConcurrency: options.maxConcurrency }),
   });
   const result = await scheduler.run(plan.tasks);
@@ -163,6 +241,37 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
       return workspace === undefined ? [] : [workspace];
     }),
   };
+}
+
+function resolveAuthorizationRepositories(
+  repositories: readonly Omit<GitWorkspace, "branch">[],
+  requested: readonly string[] | undefined,
+): readonly string[] {
+  if (requested === undefined) return repositories.map((repository) => repository.root);
+  if (requested.length !== repositories.length) {
+    throw new HardFailure(
+      "authorizationRepositories must contain one entry for every requested repository",
+    );
+  }
+  return requested.map((repository, index) => {
+    const normalized = repository.trim();
+    if (normalized.length === 0) {
+      throw new HardFailure(`authorizationRepositories[${index}] cannot be empty`);
+    }
+    return normalized;
+  });
+}
+
+async function persistWorkspaceDecision(
+  workspace: Pick<DagTaskWorkspace, "root">,
+  record: DecisionRecord,
+  eventLog: EventLog,
+): Promise<void> {
+  await new ProjectMemory({
+    repositoryRoot: workspace.root,
+    writeEnabled: true,
+    eventLog,
+  }).rememberDecisionRecord(record);
 }
 
 async function inspectRepositories(
@@ -209,4 +318,8 @@ async function persistPrList(
 
 function failNoRepositories(): never {
   throw new HardFailure("At least one repository is required");
+}
+
+function failNoAuthorizationRepository(): never {
+  throw new HardFailure("At least one authorization repository is required");
 }

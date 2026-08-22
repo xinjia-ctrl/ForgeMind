@@ -6,6 +6,13 @@ import { describe, it } from "node:test";
 import { EventLog } from "../../src/core/event-log.js";
 import { DagScheduler } from "../../src/dag/scheduler.js";
 import type { DagTask, TaskExecution, TaskRunner } from "../../src/dag/types.js";
+import { createDecisionRecord } from "../../src/negotiation/record.js";
+import type {
+  DecisionRecord,
+  Negotiation,
+  NegotiationCoordinator,
+  NegotiationRequest,
+} from "../../src/negotiation/types.js";
 
 describe("DAG scheduler", () => {
   it("runs ready tasks concurrently and starts dependents after both succeed", async () => {
@@ -90,6 +97,35 @@ describe("DAG scheduler", () => {
       "dependent task waited for an unrelated slow task",
     );
   });
+
+  it("negotiates artifact mismatches before dependents start and persists the DecisionRecord", async () => {
+    const negotiation = new ResolvingNegotiation();
+    const stored: DecisionRecord[] = [];
+    const runner = new ArtifactRunner(() => negotiation.resolved);
+    const result = await new DagScheduler({
+      parentRunId: "parent-artifact-mismatch",
+      taskRunner: runner,
+      negotiation,
+      memory: {
+        rememberDecisionRecord: (record) => {
+          stored.push(record);
+          return Promise.resolve();
+        },
+      },
+      maxConcurrency: 2,
+    }).run(tasks());
+
+    assert.equal(result.status, "SUCCEEDED");
+    assert.equal(negotiation.requests.length, 1);
+    const request = negotiation.requests[0];
+    assert.ok(request);
+    assert.equal(request.runId, "parent-artifact-mismatch");
+    assert.equal(request.trigger, "artifact-mismatch");
+    assert.match(request.topic, /contracts\/payment\.json/);
+    assert.equal(result.decisionRecords.length, 1);
+    assert.deepEqual(stored, result.decisionRecords);
+    assert.ok(runner.integrationStartedAfterResolution);
+  });
 });
 
 function tasks(): readonly DagTask[] {
@@ -133,6 +169,7 @@ class RecordingRunner implements TaskRunner {
       status: task.taskId === this.options.failedTask ? "FAILED" : "SUCCEEDED",
       branch: `forgemind/${context.runId}`,
       summary: task.taskId === this.options.failedTask ? "failed" : "done",
+      artifacts: [],
     };
   }
 }
@@ -155,6 +192,78 @@ class VariableDelayRunner implements TaskRunner {
       status: "SUCCEEDED",
       branch: `forgemind/${context.runId}`,
       summary: "done",
+      artifacts: [],
     };
+  }
+}
+
+class ArtifactRunner implements TaskRunner {
+  public integrationStartedAfterResolution = false;
+
+  public constructor(private readonly negotiationResolved: () => boolean) {}
+
+  public run(
+    task: DagTask,
+    context: { readonly parentRunId: string; readonly runId: string },
+  ): Promise<TaskExecution> {
+    if (task.taskId === "integration") {
+      this.integrationStartedAfterResolution = this.negotiationResolved();
+    }
+    const summary =
+      task.taskId === "backend"
+        ? "Amount is represented in cents"
+        : task.taskId === "frontend"
+          ? "Amount is represented in decimal dollars"
+          : "Use the negotiated payment amount representation";
+    return Promise.resolve({
+      runId: context.runId,
+      status: "SUCCEEDED",
+      branch: `forgemind/${context.runId}`,
+      summary: "done",
+      artifacts: [
+        {
+          path: "contracts/payment.json",
+          kind: "source",
+          stage: "CODE",
+          summary,
+        },
+      ],
+    });
+  }
+}
+
+class ResolvingNegotiation implements NegotiationCoordinator {
+  public readonly requests: NegotiationRequest[] = [];
+  public resolved = false;
+
+  public negotiate(request: NegotiationRequest): Promise<Negotiation> {
+    this.requests.push(request);
+    const rounds = [
+      {
+        round: 1 as const,
+        proposal: request.proposal,
+        counter: request.counter,
+        status: "CONVERGED" as const,
+      },
+    ];
+    const decisionRecord = createDecisionRecord({
+      runId: request.runId,
+      topic: request.topic,
+      trigger: request.trigger,
+      rounds,
+      decision: "Represent payment amounts in integer cents",
+      escalated: false,
+      createdAt: "2026-08-18T00:00:00.000Z",
+    });
+    this.resolved = true;
+    return Promise.resolve({
+      id: "artifact-negotiation",
+      runId: request.runId,
+      trigger: request.trigger,
+      topic: request.topic,
+      rounds,
+      status: "RESOLVED",
+      decisionRecord,
+    });
   }
 }

@@ -253,6 +253,9 @@ export abstract class BaseAgent implements StageAgent {
                 runId: ctx.runId,
                 stage: output.gate.stage,
                 evidence: output.gate.evidence,
+                ...(output.gate.coveragePercent === undefined
+                  ? {}
+                  : { coveragePercent: output.gate.coveragePercent }),
               },
             }
           : {
@@ -262,6 +265,9 @@ export abstract class BaseAgent implements StageAgent {
                 stage: output.gate.stage,
                 reason: output.gate.reason,
                 feedback: output.gate.feedback,
+                ...(output.gate.coveragePercent === undefined
+                  ? {}
+                  : { coveragePercent: output.gate.coveragePercent }),
               },
             },
       );

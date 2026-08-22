@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { MemoryProvider } from "../memory/memory-provider.js";
 import type { DecisionRecord, NegotiationRound, NegotiationTrigger } from "./types.js";
 
+export type DecisionRecordStore = Pick<MemoryProvider, "rememberDecisionRecord">;
+
 export interface DecisionRecordInput {
   readonly runId: string;
   readonly topic: string;
@@ -40,7 +42,7 @@ export function createDecisionRecord(input: DecisionRecordInput): DecisionRecord
 }
 
 export async function persistDecisionRecord(
-  memory: MemoryProvider,
+  memory: DecisionRecordStore,
   record: DecisionRecord,
 ): Promise<void> {
   await memory.rememberDecisionRecord?.(record);

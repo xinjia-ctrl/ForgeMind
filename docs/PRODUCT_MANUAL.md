@@ -1,6 +1,7 @@
 # ForgeMind 产品使用手册
 
-> 版本：v1.1（对齐已实现代码，覆盖 v0.2 → v3.0 A3，120/120 测试通过）
+> 版本：v3.0（对应 npm `3.0.0`，覆盖 v0.2 → v3.0 全部已实现能力）
+> 验证：`npm run check` 通过（151 项：148 通过，3 项真实依赖 smoke 条件跳过）
 > 说明：本手册面向使用者，描述**当前代码实际具备**的产品能力，不含规划中未实现的功能。
 
 ---
@@ -85,6 +86,7 @@ node dist/src/runtime/cli.js dag run \
 
 - 需求拆解为 DAG 任务，无依赖任务并行、有依赖等待前驱；
 - 每任务独立分支 + 独立沙箱 + 独立测试，各自过门禁；
+- 后继任务启动前检测跨任务同路径产物的语义冲突，触发有界协商并产出 `DecisionRecord`；
 - 跨仓库全部成功后才产出结果，不自动 merge。
 
 ## 6. 主动监测（Agentic）
@@ -121,6 +123,14 @@ node dist/src/runtime/cli.js dag run \
 
 决策类型：`TRIGGER`（触发 Run）/ `IGNORE`（忽略）/ `MERGE`（合并进进行中任务）/ `DEFER`（限流延后）。所有决策写入事件日志。
 
+生产部署应给 `AgenticWatchService` 注入 `FileAgenticStateStore`，文件放在服务数据目录或 `<git-dir>/forgemind/agentic/`，不要进入受管工作树。它以单一原子 checkpoint 保存 poller cursor、事件 TTL 去重、对象冷却、pending 队列、滑动窗口限流、每日配额和失败 dispatch；重启后在第一次 `accept/pollOnce` 前自动恢复。若需要在首次轮询前读取 cursor，先调用 `await watch.restore()`。checkpoint 损坏、超限或引用已删除 rule 时 fail-closed。
+
+生产输入可直接使用 `GitHubWebhookReceiver`、`JiraWebhookReceiver`、`CiWebhookReceiver`，或以 `GitHubWorkflowRunPoller`、`JiraIssuePoller`、`CiEventPoller` 轮询兜底。Webhook 必须把未解析的原始请求体交给 receiver：GitHub 使用 `X-Hub-Signature-256`，Jira 使用 `X-Hub-Signature`，CI header 可配置；签名失败、正文超限或 JSON 畸形均不会进入 Watch。`handleNodeWebhook` 可挂到 Node HTTP server。
+
+执行端使用 `ForgeMindAgenticRunDispatcher` + `FileAgenticDispatchStore`：单仓目标走 `runForgeMind`，多仓目标走 `runDagForgeMind`，主动 actor、风险升级、工具/命令白名单会继续传入子 Run。账本在执行前写入 `RUNNING`，明确失败记为 `FAILED` 并以新 attempt 重试，成功记为 `COMPLETED`；若进程崩溃留下歧义 `RUNNING`，系统拒绝盲目重跑并要求按 run id 对账。
+
+`AgenticFeedbackCoordinator` 在成功后推送 ForgeMind 分支、创建或复用 GitHub PR，再回写来源 Issue/PR、Jira Issue 或 CI。评论内置稳定 marker，PR 按 head/base 查询复用，因此回写重试不会重复执行 Run。系统不会自动 merge，也拒绝把 `test` 用作 PR 源分支。
+
 ## 7. 审批与权限（RBAC）
 
 - **审批网关**：`--yes`（自动批准）/ `--no-approve`（禁止批准）/ 交互式询问三种模式；
@@ -142,6 +152,8 @@ node dist/src/runtime/cli.js dag run \
 
 默认 L4 使用零运行时依赖的词法向量 + BM25，并归一化大小写、标点与英文复数。API 调用方可通过 `EmbeddingProvider` 注入外部向量服务；跨项目检索必须在 `SemanticMemory.repositoryRoots` 中显式列出授权仓库，CLI 的 `--memory` 仅使用当前仓库。
 
+内置 `OpenAICompatibleEmbeddingProvider` 可直连 OpenAI-compatible `/embeddings`，必须显式配置模型和维度；HTTP 错误、非 JSON、维度不符或非有限数值都会使当前阶段失败，不能静默降级为伪向量。
+
 ## 9. 回放与报告
 
 ```bash
@@ -149,7 +161,9 @@ forge-mind replay --repo <path> --run-id <run-id>   # 事件时间线 + workflow
 forge-mind report --repo <path> --run-id <run-id>   # 单文件 HTML 报告（离线可打开）
 ```
 
-报告包含：阶段时间线 + 播放控制、门禁判定与返工标记、失败定位（Stage/Hard/Fatal）、每阶段 token/工具/耗时、审计后的工具详情、流程签名。
+报告包含：阶段时间线 + 播放控制、门禁判定与返工标记、失败定位（Stage/Hard/Fatal）、每阶段 token/工具/耗时、确定性质量评分（门禁/返工/测试/覆盖率证据）与建议、审计后的工具详情、流程签名。
+
+每个 Run 结束时都会写入 `run.quality`。如测试命令能提供代码覆盖率，请在输出中加入 `FORGEMIND_COVERAGE=<0-100>`；未提供时报告明确显示 unavailable。启用 `--memory` 后，质量评估和建议写入 `lessons.json`，后续相关需求会在 PLAN/ARCH 中只读召回。
 
 ## 10. 审计导出
 
@@ -174,7 +188,18 @@ forge-mind audit export \
 
 > ⚠️ 主动监测与沙箱仅对**受信任的仓库与配置**运行。三层护栏是失控的最后防线。
 
-## 12. 已知限制与失败场景
+## 12. 发布 smoke
+
+`npm run test:smoke` 总会执行真实文件 checkpoint/dispatch 失败恢复；未配置的外部依赖会标记 skip。发布环境使用 `npm run test:smoke:release`，缺任一真实依赖即失败：
+
+| 能力       | 必需配置                                                                  |
+| ---------- | ------------------------------------------------------------------------- |
+| 容器       | `FORGEMIND_SMOKE_CONTAINER_IMAGE`（digest pinned）、可选 runtime          |
+| 外部模型   | `OPENAI_API_KEY`、`FORGEMIND_SMOKE_MODEL`、可选 `OPENAI_BASE_URL`         |
+| 外部向量   | API key、`FORGEMIND_SMOKE_EMBEDDING_MODEL`、`..._EMBEDDING_DIMENSION`     |
+| 失败后恢复 | 无外部配置；验证失败 dispatch 跨实例恢复、稳定 request id、成功后不再重放 |
+
+## 13. 已知限制与失败场景
 
 | 场景                     | 行为                    |
 | ------------------------ | ----------------------- |
@@ -187,13 +212,17 @@ forge-mind audit export \
 | DAG 任务依赖成环         | 拆解阶段报错            |
 | 主动事件未授权仓库       | IGNORE，入审计          |
 | 配额/限流命中            | DEFER，延后重试         |
+| 主动 checkpoint 损坏     | FatalFailure，拒绝恢复  |
+| 外部向量维度不符         | StageFailure，不降级    |
 
-## 13. 常见问题
+## 14. 常见问题
 
 **Q：测试命令怎么确定？** 自动读 `package.json` 的 test 脚本，非 Node 仓库用 `--test-command` 显式指定。
 
 **Q：DAG 模式为什么需要 worktree？** 每任务独立工作区，`--worktrees-root` 指定根目录。
 
-**Q：主动监测怎么接入？** 通过库 API 注入 `DevelopmentEventPoller` 与 `AgenticRunDispatcher`，或直接 `accept(event)` 喂事件。
+**Q：主动监测怎么接入？** Webhook 场景用三类 receiver + `handleNodeWebhook`；无 Webhook 时注入 GitHub/Jira/CI Poller。两者都进入同一个 `AgenticWatchService`，再接 `ForgeMindAgenticRunDispatcher` 与可选回写协调器。
+
+**Q：主动监测重启会丢 cursor 或配额吗？** 注入 `FileAgenticStateStore` 后不会；未注入时保留原有纯内存模式，适合测试与短生命周期进程。
 
 **Q：记忆会不会污染代码？** 记忆只读注入，落盘需确认（`.forgemind/memory/`），可查看可删除。

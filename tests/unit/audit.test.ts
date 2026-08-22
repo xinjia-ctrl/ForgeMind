@@ -35,8 +35,8 @@ describe("audit projection", () => {
       });
 
       assert.equal(result.scannedFiles, 2);
-      assert.equal(result.scannedEvents, 8);
-      assert.equal(result.records.length, 4);
+      assert.equal(result.scannedEvents, 10);
+      assert.equal(result.records.length, 5);
       assert.ok(result.records.every((record) => record.runId === "alice-run"));
       const approval = result.records.find((record) => record.type === "approval.approved");
       assert.deepEqual(approval, {
@@ -53,6 +53,10 @@ describe("audit projection", () => {
         operation: "git_commit",
         outcome: "APPROVED",
       });
+      const quality = result.records.find((record) => record.type === "run.quality");
+      assert.ok(quality);
+      assert.equal(quality.operation, "EXCELLENT");
+      assert.equal(quality.outcome, "100");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -167,6 +171,26 @@ async function createRun(
   await log.append({
     type: "run.finished",
     data: { runId: options.runId, status: options.status, summary: options.status },
+  });
+  await log.append({
+    type: "run.quality",
+    data: {
+      runId: options.runId,
+      requirement: "Audit fixture",
+      status: options.status,
+      score: options.status === "SUCCEEDED" ? 100 : 0,
+      grade: options.status === "SUCCEEDED" ? "EXCELLENT" : "POOR",
+      gatePassRate: options.status === "SUCCEEDED" ? 100 : 0,
+      gatesPassed: options.status === "SUCCEEDED" ? 2 : 0,
+      gatesTotal: 2,
+      reworkRounds: options.status === "SUCCEEDED" ? 0 : 2,
+      testPassRate: options.status === "SUCCEEDED" ? 100 : 0,
+      testsPassed: options.status === "SUCCEEDED" ? 1 : 0,
+      testsTotal: 1,
+      codeCoveragePercent: null,
+      coverageSource: "unavailable",
+      recommendations: [],
+    },
   });
   const events = await log.load();
   const day = options.actor === "alice" ? "02" : "03";

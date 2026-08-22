@@ -1,13 +1,29 @@
 {
   "name": "forgemind",
-  "version": "0.5.0",
+  "version": "3.0.0",
   "description": "Production-oriented multi-agent coding workflow orchestrator",
   "type": "module",
-  "private": true,
+  "private": false,
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
   "bin": {
     "forge-mind": "./dist/src/runtime/cli.js"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "prepack": "npm run build",
     "build": "tsc -p tsconfig.json && node scripts/copy-prompts.mjs",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
@@ -15,6 +31,8 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "test": "npm run build && node --test dist/tests/*/*.test.js",
+    "test:smoke": "npm run build && node --test dist/tests/smoke/*.test.js",
+    "test:smoke:release": "npm run build && node scripts/run-release-smoke.mjs",
     "eval": "npm run build && node dist/evals/prompt-eval.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

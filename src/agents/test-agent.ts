@@ -22,6 +22,7 @@ export class TestAgent extends BaseAgent {
     if (command === undefined) throw new Error("Test command cannot be empty");
     const result = await this.toolExecutor.execute("run_command", { command, args });
     const output = processOutput(result).slice(-4_000);
+    const coveragePercent = extractCoveragePercent(output);
     const gate: GateResult = {
       stage: "TEST",
       attempt: input.attempt,
@@ -31,9 +32,18 @@ export class TestAgent extends BaseAgent {
         ? "No test rework required."
         : `Fix the failing tests or implementation. Test output:\n${output}`,
       evidence: `${this.#testCommand.join(" ")}\n${output}`,
+      ...(coveragePercent === null ? {} : { coveragePercent }),
     };
     return { kind: "gate", gate };
   }
+}
+
+export function extractCoveragePercent(output: string): number | null {
+  const matches = [...output.matchAll(/(?:^|\s)FORGEMIND_COVERAGE\s*=\s*(\d+(?:\.\d+)?)(?=\s|$)/g)];
+  const value = matches.at(-1)?.[1];
+  if (value === undefined) return null;
+  const coverage = Number(value);
+  return Number.isFinite(coverage) && coverage >= 0 && coverage <= 100 ? coverage : null;
 }
 
 function processOutput(result: ToolResult): string {

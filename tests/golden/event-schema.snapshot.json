@@ -92,6 +92,12 @@
       "type": "run.finished",
       "stage": null,
       "detail": "FAILED: Planning failed"
+    },
+    {
+      "seq": 16,
+      "type": "run.quality",
+      "stage": null,
+      "detail": "Quality POOR: 0/100"
     }
   ]
 }

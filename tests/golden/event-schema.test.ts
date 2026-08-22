@@ -162,6 +162,26 @@ it("keeps the versioned event and replay contract stable", async () => {
       type: "run.finished",
       data: { runId: "golden-run", status: "FAILED", summary: "Planning failed" },
     });
+    await log.append({
+      type: "run.quality",
+      data: {
+        runId: "golden-run",
+        requirement: "Add deterministic replay",
+        status: "FAILED",
+        score: 0,
+        grade: "POOR",
+        gatePassRate: 0,
+        gatesPassed: 0,
+        gatesTotal: 0,
+        reworkRounds: 0,
+        testPassRate: 0,
+        testsPassed: 0,
+        testsTotal: 0,
+        codeCoveragePercent: null,
+        coverageSource: "unavailable",
+        recommendations: ["Ensure the run reaches REVIEW and TEST quality gates."],
+      },
+    });
     const snapshot = JSON.parse(
       await readFile("tests/golden/event-schema.snapshot.json", "utf8"),
     ) as unknown;
@@ -169,7 +189,7 @@ it("keeps the versioned event and replay contract stable", async () => {
     const rawEvents = await log.load();
     assert.deepEqual(
       rawEvents.map((event) => event.seq),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

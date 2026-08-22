@@ -145,6 +145,35 @@ describe("report HTML rendering", () => {
     assert.match(html, /matched router &lt;decision&gt;/);
     assert.doesNotMatch(html, /redacted:20/);
   });
+
+  it("renders the quality score, evidence, coverage, and recommendations", () => {
+    const model = buildReportViewModel([
+      event(1, "run.quality", {
+        runId: "quality-panel-run",
+        requirement: "Render quality evidence",
+        status: "SUCCEEDED",
+        score: 88,
+        grade: "GOOD",
+        gatePassRate: 75,
+        gatesPassed: 3,
+        gatesTotal: 4,
+        reworkRounds: 1,
+        testPassRate: 100,
+        testsPassed: 1,
+        testsTotal: 1,
+        codeCoveragePercent: 92.5,
+        coverageSource: "test-output",
+        recommendations: ["Fix <boundary> feedback earlier."],
+      }),
+    ]);
+
+    const html = renderReportHtml(model);
+    assert.match(html, /QUALITY ASSESSMENT/);
+    assert.match(html, /Deterministic run quality/);
+    assert.match(html, /GOOD/);
+    assert.match(html, /92\.50%/);
+    assert.match(html, /Fix &lt;boundary&gt; feedback earlier/);
+  });
 });
 
 function event<K extends EventType>(

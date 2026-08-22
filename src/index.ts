@@ -11,6 +11,7 @@ export { LayeredMemory } from "./memory/layered-memory.js";
 export { EpisodicMemory } from "./memory/episodic-memory.js";
 export { ProjectMemory } from "./memory/project-memory.js";
 export { LexicalEmbeddingProvider, SemanticMemory } from "./memory/semantic-memory.js";
+export { OpenAICompatibleEmbeddingProvider } from "./memory/openai-compatible-embedding-provider.js";
 export { EventLog } from "./core/event-log.js";
 export { Orchestrator } from "./core/orchestrator.js";
 export { OpenAICompatibleChatProvider } from "./llm/openai-compatible-provider.js";
@@ -26,6 +27,24 @@ export { parseAgenticConfig } from "./agentic/config.js";
 export { normalizeDevelopmentEvent } from "./agentic/normalize.js";
 export { AgenticTriggerEngine } from "./agentic/trigger.js";
 export { AgenticWatchService, EventLogAgenticAuditSink } from "./agentic/watch.js";
+export { FileAgenticStateStore, parseAgenticWatchCheckpoint } from "./agentic/state.js";
+export {
+  CiWebhookReceiver,
+  GitHubWebhookReceiver,
+  JiraWebhookReceiver,
+  WebhookRequestError,
+  handleNodeWebhook,
+  verifyWebhookHmac,
+} from "./agentic/webhook.js";
+export { GitHubApiClient, GitHubApiError, GitHubWorkflowRunPoller } from "./agentic/github.js";
+export { JiraApiClient, JiraApiError, JiraIssuePoller } from "./agentic/jira.js";
+export { CiEventPoller, HttpCiFeedbackClient } from "./agentic/ci.js";
+export {
+  AgenticDispatchInProgressError,
+  FileAgenticDispatchStore,
+  ForgeMindAgenticRunDispatcher,
+} from "./agentic/dispatcher.js";
+export { AgenticFeedbackCoordinator, GitBranchPublisher } from "./agentic/feedback.js";
 export { ChatNegotiationTurnProvider, NegotiationProtocol } from "./negotiation/protocol.js";
 export {
   detectArchitectureConflict,
@@ -33,6 +52,8 @@ export {
   detectRepeatedReviewRejection,
 } from "./negotiation/triggers.js";
 export { createDecisionRecord, persistDecisionRecord } from "./negotiation/record.js";
+export type { DecisionRecordStore } from "./negotiation/record.js";
+export { evaluateRunQuality } from "./quality/metrics.js";
 export {
   AGENTIC_ACTOR_ID,
   agenticRunGovernance,
@@ -52,6 +73,7 @@ export type {
   LexicalEmbeddingProviderOptions,
   SemanticMemoryOptions,
 } from "./memory/semantic-memory.js";
+export type { OpenAICompatibleEmbeddingProviderOptions } from "./memory/openai-compatible-embedding-provider.js";
 export type { RunExecution, RunOptions } from "./runtime/run.js";
 export type {
   DagPlan,
@@ -97,7 +119,61 @@ export type {
   DevelopmentEventNormalizerOptions,
 } from "./agentic/normalize.js";
 export type { AgenticTriggerEngineOptions } from "./agentic/trigger.js";
+export type {
+  AgenticStateStore,
+  AgenticTriggerCheckpoint,
+  AgenticWatchCheckpoint,
+  FileAgenticStateStoreOptions,
+} from "./agentic/state.js";
 export type { AgenticRunGovernance } from "./agentic/guardrail.js";
+export type {
+  AgenticWebhookReceiver,
+  CiWebhookReceiverOptions,
+  GitHubWebhookReceiverOptions,
+  JiraWebhookReceiverOptions,
+  WebhookHeaders,
+  WebhookHttpRequest,
+  WebhookReceiveResult,
+} from "./agentic/webhook.js";
+export type {
+  GitHubApiClientOptions,
+  GitHubCommentResult,
+  GitHubPullRequest,
+  GitHubPullRequestInput,
+  GitHubWorkflowRunPollerOptions,
+} from "./agentic/github.js";
+export type {
+  JiraApiClientOptions,
+  JiraAuthentication,
+  JiraCommentResult,
+  JiraIssuePollerOptions,
+  JiraSearchPage,
+} from "./agentic/jira.js";
+export type {
+  CiEventPollerOptions,
+  CiFeedback,
+  CiFeedbackClient,
+  CiPollBatch,
+  CiPollDelivery,
+  CiPollSource,
+  HttpCiFeedbackClientOptions,
+} from "./agentic/ci.js";
+export type {
+  AgenticDispatchClaim,
+  AgenticDispatchRecord,
+  AgenticDispatchStore,
+  AgenticExecutionReceipt,
+  AgenticPullRequestCandidate,
+  AgenticRepositoryTarget,
+  FileAgenticDispatchStoreOptions,
+  ForgeMindAgenticRunDispatcherOptions,
+} from "./agentic/dispatcher.js";
+export type {
+  AgenticFeedbackCoordinatorOptions,
+  AgenticFeedbackPublisher,
+  BranchPublisher,
+  GitBranchPublisherOptions,
+} from "./agentic/feedback.js";
 export type {
   DecisionRecord,
   Negotiation,
@@ -115,3 +191,4 @@ export type {
   NegotiationTurnProvider,
   NegotiationTurnResult,
 } from "./negotiation/protocol.js";
+export type { CoverageSource, QualityGrade, RunQualityMetrics } from "./quality/types.js";

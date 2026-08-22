@@ -1,5 +1,6 @@
 import type { ArtifactRef, GateResult, TaskContext } from "../core/types.js";
 import type { DecisionRecord } from "../negotiation/types.js";
+import type { RunQualityMetrics } from "../quality/types.js";
 import {
   MEMORY_SCOPES,
   type MemoryProvider,
@@ -37,6 +38,12 @@ export class LayeredMemory implements MemoryProvider {
       this.providers().map(
         (provider) => provider.rememberDecisionRecord?.(record) ?? Promise.resolve(),
       ),
+    );
+  }
+
+  public async rememberQuality(quality: RunQualityMetrics): Promise<void> {
+    await Promise.all(
+      this.providers().map((provider) => provider.rememberQuality?.(quality) ?? Promise.resolve()),
     );
   }
 

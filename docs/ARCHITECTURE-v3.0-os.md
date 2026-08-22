@@ -2,11 +2,12 @@
 
 > 迭代：v3.0（第九轮，终极形态）
 > 对齐：`docs/PRD-v3.0-os.md`（终极形态主线）
-> 前置：v3.0 主动层（`src/agentic/`）已实现；A2 协商与 A3 L4 记忆为本轮新增设计
-> 状态：A1、A2 核心与 A3 L4 记忆已实现；A2 跨任务 Artifact 运行时接入与 A4 质量回馈待实现
+> 实现基线：`src/agentic/` 主动闭环、`src/negotiation/` 有界协商、L4 语义记忆与 A4 质量回馈均已落地
+> 状态：A1 主动层、A2 协商、A3 L4 记忆与 A4 质量回馈均已实现
+> 验证：`npm run check` 通过（151 项：148 通过，3 项真实依赖 smoke 条件跳过）
 > 技术栈：TypeScript / Node，**严守零运行时第三方依赖**
 
-> 说明：`ARCHITECTURE-v3.0-agentic.md` 已细化主动触发层（A1 + guardrail），本文档为对齐 `PRD-v3.0-os.md` 的**完整架构**，在主动层之上新增 A2 协商与 A3 L4 记忆设计。
+> 说明：`ARCHITECTURE-v3.0-agentic.md` 细化主动触发与执行回写层；本文档是对齐 `PRD-v3.0-os.md` 的**已实现完整架构**，统一描述 A1 主动闭环、A2 协商、A3 记忆和 A4 质量回馈。
 
 ---
 
@@ -37,18 +38,18 @@ Active Layer（已实现）── src/agentic/
   watch → normalize → trigger（去重/冷却/限流/配额）→ guardrail（actor/风险升级/白名单）
         │ AgenticRunRequest
         ▼
-Dispatch（A3 接缝）
+幂等 Dispatcher（已实现）
         ▼
 DAG / Orchestrator（v1.0/v0.2 内核，复用）
   │  ├─ 协商触发点：ARCH 方案冲突 / REVIEW 连续驳回 / 跨任务产物不一致
-  │  └─ Negotiation Layer（新增）── src/negotiation/
+  │  └─ Negotiation Layer（已实现）── src/negotiation/
   │        Proposal → Counter → Decision（三轮有界）→ DecisionRecord → 写 L3
   ▼
-Memory Layer（v0.5 + 新增 L4）── src/memory/
-  L1 TaskContext · L2 EventLog · L3 project-memory（+ decisions.json）
-  L4 semantic-memory（新：EmbeddingProvider 接缝 + 默认词法实现）
+Memory Layer（v0.5 + 已实现 L4）── src/memory/
+  L1 TaskContext · L2 EventLog · L3 project-memory（decisions.json + lessons.json）
+  L4 semantic-memory（EmbeddingProvider 接缝 + 默认词法实现）
   ▼
-EventLog v1.5：+ negotiation.* / development.* / trigger.*
+EventLog v1.5：+ negotiation.* / development.* / trigger.* / run.quality
   ▼
 report / audit（复用投影管线）
 ```
@@ -57,16 +58,18 @@ report / audit（复用投影管线）
 
 ## 3. A1 主动式 Agent（已实现，引用）
 
-`src/agentic/` 已实现并配套测试（A1/A2 内核 + A4 运行时接缝），详见 `ARCHITECTURE-v3.0-agentic.md`。要点：
+`src/agentic/` 已实现并配套测试（Agentic 专项 A1-A6 完整闭环），详见 `ARCHITECTURE-v3.0-agentic.md`。要点：
 
 - **异构归一化**（`normalize.ts`）：GitHub/Jira/CI/内部事件 → `DevelopmentEvent`（有界字段），畸形事件拒绝，不写原始 payload 进审计（ADR-17）。
 - **确定性触发**（`trigger.ts`）：规则顺序匹配、仓库白名单、TTL 去重、同对象合并、冷却、滑动窗口限流、每日配额；决策四态 `TRIGGER/IGNORE/MERGE/DEFER`（ADR-18）。
 - **消费游标**（`watch.ts`）：cursor 仅在 dispatch 成功后推进，失败保留稳定 request id 重试，防丢任务（ADR-19）。
 - **权限只收紧**（`guardrail.ts`）：actor 固定 `agentic/developer`；`escalateAgenticRisk`（低→中、中/高→高）；工具/命令与既有 stage policy 取交集（ADR-20）。
+- **签名入口与轮询**（`webhook.ts` / `github.ts` / `jira.ts` / `ci.ts`）：原始字节 HMAC 后归一化，三类 cursor Poller 作为兜底。
+- **幂等执行与回写**（`dispatcher.ts` / `feedback.ts`）：单仓/DAG 路由、持久状态机、PR 创建/复用和来源评论；无自动 merge。
 
 ---
 
-## 4. A2 多 Agent 协商（新增设计）
+## 4. A2 多 Agent 协商（已实现）
 
 ### 4.1 触发点（与既有编排衔接）
 
@@ -154,22 +157,24 @@ interface EmbeddingProvider {
 ```
 
 - **默认实现**（零依赖）：`LexicalEmbeddingProvider`——确定性哈希 TF 向量 + corpus BM25/IDF + 符号归一化（大小写/标点/复数），与关键词层互补而非替代。
-- **向量实现**：外部库/服务作为 `EmbeddingProvider` 的可选实现接入，不改变 `recall` 接口，不引入运行时依赖。
+- **向量实现**：内置 `OpenAICompatibleEmbeddingProvider` 直连外部 `/embeddings`，显式锁定模型与维度并校验有限值；不改变 `recall` 接口，不引入运行时依赖。
 - **写路径不变**：语义层只做检索增强，`remember` 仍走确定性投影（ADR-7），LLM 不参与记忆生成。
 
 ### 5.2 decision-record 与教训沉淀
 
 - 协商的 `DecisionRecord` → L3 `decisions.json`（tags: topic/trigger/时间）。
-- Run 失败教训（`gate.rejected.feedback`）→ L3 `lessons.json`（v0.5 已有）。
+- Run 失败教训（`gate.rejected.feedback`）与 A4 质量评估/建议 → L3 `lessons.json`。
 - 检索：后续 Run 的 `recall(query, scopes: ["project","semantic"])` 可命中协商决策——"这个需求上次因为方案 X 争议升级过"，直接注入装配上下文。
 
 ---
 
-## 6. A4 自进化质量回馈（P1）
+## 6. A4 自进化质量回馈（已实现）
 
-- Run 完成后计算质量指标：门禁通过率、返工轮次、测试覆盖率（来源事件聚合，纯函数）。
-- 反馈路径（ADR-23）：质量指标 → 沉淀为教训/评估记录 → 影响提示词模板选择与策略建议——**只读证据驱动**，不做黑盒调参。
-- 可见性：报告"质量评估"面板 + 审计（`run.quality` 事件，v1.5）。
+- Run 完成后由 `evaluateRunQuality(events)` 纯函数聚合：门禁通过率、驳回返工轮次、TEST 通过率与代码覆盖率证据，生成 0–100 分及 `EXCELLENT/GOOD/NEEDS_ATTENTION/POOR` 等级。
+- 代码覆盖率只接受测试输出中的显式 `FORGEMIND_COVERAGE=<0-100>` 标记；缺失时记录 `unavailable`，不从任意日志文本猜测或伪造百分比。
+- 评分口径：门禁通过率 40% + 覆盖率证据 50%（覆盖率不可用时使用 TEST 通过率）+ 成功状态 10 分 − 每轮返工 5 分（最多扣 20 分）。
+- 反馈路径（ADR-23）：`run.quality` → L3 `lessons.json` 质量评估/确定性建议 → 后续同需求 Run 经 project/semantic recall 注入 PLAN/ARCH；**只读证据驱动**，不做黑盒调参。
+- 可见性：回放/审计投影 + 离线报告“Deterministic run quality”面板，显示评分、原始计数、覆盖率来源与建议。
 
 ---
 
@@ -179,7 +184,7 @@ interface EmbeddingProvider {
 | -------------------------------------------------------- | ---------------------- |
 | 新增 `development.received` / `trigger.decided`          | 已实现（agentic 层）   |
 | 新增 `negotiation.*`（started/round/resolved/escalated） | 协商审计               |
-| 新增 `run.quality`                                       | A4 质量评估（P1）      |
+| 新增 `run.quality`                                       | A4 质量评估（已实现）  |
 | `approval.*` 复用                                        | 协商升级走的既有审批链 |
 
 golden 快照同步；`parseEvent` 兼容旧日志；`workflowSignature` 按 runId 过滤后语义不变。
@@ -196,14 +201,14 @@ golden 快照同步；`parseEvent` 兼容旧日志；`workflowSignature` 按 run
 
 ## 9. 测试策略
 
-| 里程碑       | 测试落点                                                                              | 形态                                               |
-| ------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| A1（已实现） | agentic-normalize/trigger/watch/guardrail 测试（现有 103 测试内）                     | ✅ 已覆盖                                          |
-| A2 协商      | 三触发点检测、三轮有界（第 3 轮强制收敛）、无共识升级、超时、DecisionRecord 落盘      | 单元测试（FakeChatProvider + FakeApprovalGateway） |
-| A3 L4        | 词法检索相关性、EmbeddingProvider 接缝（注入 fake 向量）、decision-record 跨 Run 检索 | 单元 + e2e                                         |
-| A4（P1）     | 质量指标聚合、反馈可见性                                                              | 单元                                               |
+| 里程碑 | 测试落点                                                                         | 形态                                                  |
+| ------ | -------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| A1     | normalize/trigger/watch/webhook/poller/dispatcher/feedback + 签名到回写 e2e      | ✅ 已覆盖                                             |
+| A2     | 三触发点检测、三轮有界（第 3 轮强制收敛）、无共识升级、超时、DecisionRecord 落盘 | ✅ 单元测试（FakeChatProvider + FakeApprovalGateway） |
+| A3     | 词法相关性、外部 EmbeddingProvider 契约/真实 smoke、DecisionRecord 跨 Run 检索   | ✅ 单元 + e2e + 发布 smoke                            |
+| A4     | 质量指标聚合、事件/审计、L3 教训、后续提示词召回、报告面板                       | ✅ 单元 + golden + e2e                                |
 
-回归要求：`npm run check` + 既有测试 + 本轮新增全部通过。A3 完成后共 120 个测试。
+回归要求：`npm run check` + 既有测试 + 本轮新增全部通过。当前共 151 个测试用例；本地结果为 148 通过、3 个真实依赖 smoke 因无外部运行时/凭据而条件跳过，发布门禁禁止跳过。
 
 ## 10. 风险与决策记录
 
@@ -217,20 +222,21 @@ golden 快照同步；`parseEvent` 兼容旧日志；`workflowSignature` 按 run
 
 ## 11. 里程碑映射（PRD §9）
 
-| 里程碑   | 架构动作                                                                                                           |
-| -------- | ------------------------------------------------------------------------------------------------------------------ |
-| A1       | 已实现（`src/agentic/`）                                                                                           |
-| A2       | ✅ 核心：`src/negotiation/` + `negotiation.*` 事件 + ArchitectureAgent 契约扩展；Artifact 运行时接入待显式引用契约 |
-| A3       | ✅ `src/memory/semantic-memory.ts` + `EmbeddingProvider` 接缝 + decisions.json/lessons.json 检索                   |
-| A4（P1） | `run.quality` 事件 + 报告质量面板                                                                                  |
+| 里程碑 | 架构动作                                                                                            |
+| ------ | --------------------------------------------------------------------------------------------------- |
+| A1     | ✅ `src/agentic/`：签名输入、Poller、持久幂等执行、PR/评论回写与安全护栏                            |
+| A2     | ✅ `src/negotiation/` + `negotiation.*` 事件 + ArchitectureAgent 契约扩展 + DAG Artifact 运行时接入 |
+| A3     | ✅ `src/memory/semantic-memory.ts` + `EmbeddingProvider` 接缝 + decisions.json/lessons.json 检索    |
+| A4     | ✅ `src/quality/` + `run.quality` + L3 质量教训/召回 + 报告质量面板                                 |
 
 ## 12. 完成度对照
 
-| 能力                                             | 状态    | 位置                                               |
-| ------------------------------------------------ | ------- | -------------------------------------------------- |
-| A1 主动触发（watch/normalize/trigger/guardrail） | ✅      | `src/agentic/`                                     |
-| 主动层审计事件（development._/trigger._）        | ✅      | `src/core/events.ts`                               |
-| RBAC/风险等级（v2.0 基座）                       | ✅      | `src/auth/types.ts`                                |
-| A2 协商协议                                      | ✅ 核心 | ARCH/REVIEW 已接入；Artifact mismatch 为纯检测接缝 |
-| A3 L4 语义记忆                                   | ✅      | `src/memory/semantic-memory.ts`（本文档 §5）       |
-| A4 质量回馈                                      | ⏳ P1   | 本文档 §6                                          |
+| 能力                                        | 状态 | 位置                                          |
+| ------------------------------------------- | ---- | --------------------------------------------- |
+| A1 主动触发（含 webhook/poller/dispatcher） | ✅   | `src/agentic/`                                |
+| 主动闭环 PR 与 Issue/CI 回写                | ✅   | `src/agentic/feedback.ts` + 平台客户端        |
+| 主动层审计事件（development._/trigger._）   | ✅   | `src/core/events.ts`                          |
+| RBAC/风险等级（v2.0 基座）                  | ✅   | `src/auth/types.ts`                           |
+| A2 协商协议                                 | ✅   | ARCH/REVIEW 与 DAG Artifact mismatch 均已接入 |
+| A3 L4 语义记忆                              | ✅   | `src/memory/semantic-memory.ts`（本文档 §5）  |
+| A4 质量回馈                                 | ✅   | `src/quality/` + EventLog/L3/报告面板         |

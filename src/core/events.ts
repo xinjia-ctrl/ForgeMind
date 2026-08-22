@@ -1,4 +1,5 @@
 import type { RiskLevel, Role } from "../auth/types.js";
+import type { CoverageSource, QualityGrade } from "../quality/types.js";
 import type { RunStatus, StageId, StageStatus } from "./types.js";
 
 interface ActorIndex {
@@ -185,11 +186,13 @@ interface EventPayloadMap {
     readonly stage: "REVIEW" | "TEST";
     readonly reason: string;
     readonly feedback: string;
+    readonly coveragePercent?: number;
   };
   readonly "gate.passed": {
     readonly runId: string;
     readonly stage: "REVIEW" | "TEST";
     readonly evidence: string;
+    readonly coveragePercent?: number;
   };
   readonly "stage.completed": {
     readonly runId: string;
@@ -207,6 +210,23 @@ interface EventPayloadMap {
     readonly runId: string;
     readonly status: RunStatus;
     readonly summary: string;
+  };
+  readonly "run.quality": {
+    readonly runId: string;
+    readonly requirement: string;
+    readonly status: RunStatus;
+    readonly score: number;
+    readonly grade: QualityGrade;
+    readonly gatePassRate: number;
+    readonly gatesPassed: number;
+    readonly gatesTotal: number;
+    readonly reworkRounds: number;
+    readonly testPassRate: number;
+    readonly testsPassed: number;
+    readonly testsTotal: number;
+    readonly codeCoveragePercent: number | null;
+    readonly coverageSource: CoverageSource;
+    readonly recommendations: readonly string[];
   };
 }
 

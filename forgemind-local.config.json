@@ -1,0 +1,6 @@
+{
+  "defaultMode": "deny",
+  "sandbox": {
+    "mode": "local"
+  }
+}

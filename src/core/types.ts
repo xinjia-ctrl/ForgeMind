@@ -60,6 +60,7 @@ export interface GateResult {
   readonly reason: string;
   readonly feedback: string;
   readonly evidence: string;
+  readonly coveragePercent?: number;
 }
 
 export interface TaskContext {

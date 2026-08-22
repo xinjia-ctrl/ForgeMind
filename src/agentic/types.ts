@@ -78,6 +78,12 @@ export interface AgenticRunRequest {
   readonly ruleId: string;
   readonly sourceEventIds: readonly string[];
   readonly triggeredAt: string;
+  readonly origin: {
+    readonly source: DevelopmentEventSource;
+    readonly type: DevelopmentEventType;
+    readonly object: DevelopmentObject;
+    readonly context: Readonly<Record<string, DevelopmentContextValue>>;
+  };
 }
 
 export type TriggerDecisionReason =

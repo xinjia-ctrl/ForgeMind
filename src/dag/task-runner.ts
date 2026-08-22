@@ -54,7 +54,20 @@ export class ForgeMindTaskRunner implements TaskRunner {
       status: execution.result.status,
       branch: execution.result.context.repo.branch,
       summary: execution.result.summary,
+      artifacts: finalCodeArtifacts(execution.result.context.artifacts),
       eventLogPath: execution.eventLogPath,
     };
   }
+}
+
+function finalCodeArtifacts(
+  artifacts: RunExecution["result"]["context"]["artifacts"],
+): RunExecution["result"]["context"]["artifacts"] {
+  const byPath = new Map<string, (typeof artifacts)[number]>();
+  for (const artifact of artifacts) {
+    if (artifact.stage === "CODE" && artifact.kind === "source") {
+      byPath.set(artifact.path, artifact);
+    }
+  }
+  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
 }

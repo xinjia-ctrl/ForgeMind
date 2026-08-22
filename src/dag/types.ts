@@ -1,4 +1,5 @@
-import type { RunStatus } from "../core/types.js";
+import type { ArtifactRef, RunStatus } from "../core/types.js";
+import type { DecisionRecord } from "../negotiation/types.js";
 
 export const TASK_STATUSES = ["SUCCEEDED", "FAILED", "BLOCKED"] as const;
 
@@ -21,6 +22,7 @@ export interface TaskExecution {
   readonly status: RunStatus;
   readonly branch: string;
   readonly summary: string;
+  readonly artifacts: readonly ArtifactRef[];
   readonly eventLogPath?: string;
 }
 
@@ -45,6 +47,7 @@ export interface DagResult {
   readonly parentRunId: string;
   readonly status: "SUCCEEDED" | "FAILED" | "PARTIAL";
   readonly tasks: readonly DagTaskResult[];
+  readonly decisionRecords: readonly DecisionRecord[];
   readonly prList: readonly PRCandidate[];
 }
 

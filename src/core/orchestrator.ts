@@ -20,6 +20,7 @@ import type {
   NegotiationCoordinator,
   NegotiationEvidence,
 } from "../negotiation/types.js";
+import { evaluateRunQuality } from "../quality/metrics.js";
 import type { ArtifactRef, RunResult, RunStatus, StageId, TaskContext } from "./types.js";
 
 interface OrchestratorOptions {
@@ -203,6 +204,9 @@ export class Orchestrator {
       type: "run.finished",
       data: { runId: ctx.runId, status, summary },
     });
+    const quality = evaluateRunQuality(await this.#eventLog.load());
+    await this.#eventLog.append({ type: "run.quality", data: quality });
+    await this.#memory.rememberQuality?.(quality);
     return { status, context: ctx, summary };
   }
 }

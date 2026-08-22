@@ -78,6 +78,7 @@ function normalizeGitHub(context: NormalizationContext, mention: string): Develo
     const conclusion = optionalString(run["conclusion"] ?? run["status"]);
     if (conclusion !== "failure" && conclusion !== "failed") return null;
     const labels = stringLabels(payload["labels"]);
+    const pullRequestNumber = githubWorkflowPullRequestNumber(run);
     return developmentEvent({
       id: `github:${context.deliveryId}`,
       source: "github",
@@ -95,6 +96,7 @@ function normalizeGitHub(context: NormalizationContext, mention: string): Develo
         conclusion,
         workflow: optionalString(run["name"]) ?? key,
         headSha: optionalString(run["head_sha"]) ?? "unknown",
+        ...(pullRequestNumber === undefined ? {} : { pullRequestNumber }),
       },
     });
   }
@@ -136,6 +138,23 @@ function normalizeGitHub(context: NormalizationContext, mention: string): Develo
     });
   }
   return null;
+}
+
+function githubWorkflowPullRequestNumber(
+  run: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const pullRequests = run["pull_requests"];
+  if (!Array.isArray(pullRequests)) return undefined;
+  for (const entry of pullRequests) {
+    const pullRequest = optionalObject(entry);
+    if (pullRequest === null) continue;
+    try {
+      return stringIdentifier(pullRequest["number"], "github workflow pull request number");
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 function normalizeJira(context: NormalizationContext): DevelopmentEvent | null {

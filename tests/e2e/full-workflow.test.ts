@@ -61,6 +61,11 @@ it("runs requirement through real tests and creates a Git commit", async () => {
           event.data.structuredOutput === true,
       ),
     );
+    const quality = events.find((event) => event.type === "run.quality");
+    assert.ok(quality);
+    assert.equal(quality.data.grade, "EXCELLENT");
+    assert.equal(quality.data.score, 100);
+    assert.equal(quality.data.codeCoveragePercent, null);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -203,11 +208,16 @@ it("injects memory from the first run into PLAN and ARCH on the second run", asy
     const archPrompt = secondProvider.calls[1]?.messages.find((message) => message.role === "user");
     assert.match(planPrompt?.content ?? "", /Historical run memory-first-run/);
     assert.match(archPrompt?.content ?? "", /Historical run memory-first-run/);
+    assert.match(planPrompt?.content ?? "", /Run quality EXCELLENT/);
     const firstEvents = await EventLog.open(
       path.dirname(first.eventLogPath),
       "memory-first-run",
     ).load();
     assert.ok(firstEvents.some((event) => event.type === "memory.stored"));
+    const qualityLessons = JSON.parse(
+      await readFile(path.join(repo, ".forgemind", "memory", "lessons.json"), "utf8"),
+    ) as { readonly entries: readonly { readonly content: string }[] };
+    assert.ok(qualityLessons.entries.some((entry) => entry.content.includes("Run quality")));
     const events = await EventLog.open(
       path.dirname(second.eventLogPath),
       "memory-second-run",
@@ -379,6 +389,105 @@ it("runs three isolated tasks across two repositories and produces an unmerged P
   }
 });
 
+it("negotiates a DAG artifact mismatch and persists the DecisionRecord in task memory", async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "forgemind-dag-negotiation-e2e-"));
+  const repositories = await Promise.all([
+    createDemoRepository(path.join(fixtureRoot, "service")),
+    createDemoRepository(path.join(fixtureRoot, "web")),
+  ]);
+  try {
+    const parentProvider = new FakeChatProvider([
+      JSON.stringify({
+        summary: "Implement the shared amount contract",
+        tasks: [
+          {
+            taskId: "service-contract",
+            deps: [],
+            repo: repositories[0],
+            requirement: "Represent payment amounts for the service",
+          },
+          {
+            taskId: "web-contract",
+            deps: [],
+            repo: repositories[1],
+            requirement: "Represent payment amounts for the web client",
+          },
+          {
+            taskId: "integration-contract",
+            deps: ["service-contract", "web-contract"],
+            repo: repositories[0],
+            requirement: "Integrate the negotiated payment amount representation",
+          },
+        ],
+      }),
+      JSON.stringify({
+        position: "Represent payment amounts as integer cents",
+        tradeoffs: ["Requires formatting at display boundaries"],
+        acceptsOther: false,
+        decision: "",
+      }),
+      JSON.stringify({
+        position: "Represent payment amounts as integer cents",
+        tradeoffs: ["Avoids floating-point rounding"],
+        acceptsOther: true,
+        decision: "Use integer cents for payment amounts",
+      }),
+    ]);
+    const execution = await runDagForgeMind({
+      repositories,
+      requirement: "Align payment amount semantics across service and web",
+      provider: parentProvider,
+      providerForTask: (task) =>
+        createArtifactMismatchProvider(
+          task.taskId === "service-contract"
+            ? "Payment amount uses integer cents"
+            : task.taskId === "web-contract"
+              ? "Payment amount uses decimal dollars"
+              : "Integration uses the negotiated integer cents representation",
+        ),
+      model: "fake-model",
+      parentRunId: "dag-artifact-negotiation-e2e",
+      maxConcurrency: 2,
+      worktreesRoot: path.join(fixtureRoot, "worktrees"),
+      approveAll: true,
+      memory: true,
+      processRunner: createSandboxRunner(),
+    });
+
+    assert.equal(execution.result.status, "SUCCEEDED");
+    assert.equal(parentProvider.remainingResponses, 0);
+    assert.equal(execution.result.decisionRecords.length, 1);
+    const decisionRecord = execution.result.decisionRecords[0];
+    assert.ok(decisionRecord);
+    assert.equal(decisionRecord.trigger, "artifact-mismatch");
+    assert.match(decisionRecord.decision, /integer cents/);
+    const parentEvents = await EventLog.open(
+      path.dirname(execution.eventLogPath),
+      "dag-artifact-negotiation-e2e",
+    ).load();
+    assert.deepEqual(
+      parentEvents
+        .filter((event) => event.type.startsWith("negotiation."))
+        .map((event) => event.type),
+      ["negotiation.started", "negotiation.round", "negotiation.resolved"],
+    );
+    for (const workspace of execution.workspaces) {
+      const memory = JSON.parse(
+        await readFile(path.join(workspace.root, ".forgemind", "memory", "decisions.json"), "utf8"),
+      ) as { readonly entries: readonly { readonly content: string }[] };
+      assert.ok(
+        memory.entries.some(
+          (entry) =>
+            entry.content.includes("Cross-task artifact mismatch") &&
+            entry.content.includes("integer cents"),
+        ),
+      );
+    }
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 function createDemoProvider(): FakeChatProvider {
   return new FakeChatProvider([
     JSON.stringify({
@@ -428,6 +537,41 @@ function createDemoProvider(): FakeChatProvider {
       reason: "Implementation is correct and scoped",
       feedback: "No changes required",
       evidence: "Reviewed implementation and meaningful node:test coverage",
+    }),
+  ]);
+}
+
+function createArtifactMismatchProvider(summary: string): FakeChatProvider {
+  return new FakeChatProvider([
+    JSON.stringify({
+      objective: "Implement the payment amount contract",
+      steps: [{ id: "1", title: "Implement", description: "Update the shared contract" }],
+      acceptanceCriteria: ["The payment amount representation is explicit"],
+      summary: "Implement the payment amount contract",
+    }),
+    JSON.stringify({
+      decisions: [summary],
+      files: [{ path: "src/math.js", purpose: "Shared payment amount contract" }],
+      risks: ["Cross-system representation mismatch"],
+      summary,
+    }),
+    JSON.stringify({
+      summary,
+      operations: [
+        {
+          tool: "write_file",
+          args: {
+            path: "src/math.js",
+            content: `export const paymentAmountRepresentation = ${JSON.stringify(summary)};\n`,
+          },
+        },
+      ],
+    }),
+    JSON.stringify({
+      approved: true,
+      reason: "The contract is explicit",
+      feedback: "No changes required",
+      evidence: "Reviewed the payment amount representation",
     }),
   ]);
 }

@@ -163,6 +163,12 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
           };
         case "run.finished":
           return { type: event.type, outcome: event.data.status };
+        case "run.quality":
+          return {
+            type: event.type,
+            operation: event.data.grade,
+            outcome: String(event.data.score),
+          };
       }
     });
 }

@@ -2,6 +2,7 @@ import type { FailureKind } from "../core/errors.js";
 import type { ForgeMindEvent } from "../core/events.js";
 import { workflowSignature, workflowTrace } from "../core/reproducibility.js";
 import { STAGES, type RunStatus, type StageId } from "../core/types.js";
+import type { CoverageSource, QualityGrade } from "../quality/types.js";
 import { auditValue } from "../tools/audit.js";
 
 export const MAX_REPORT_EVENTS = 2_000;
@@ -106,6 +107,24 @@ export interface ReportContextAssembly {
   }[];
 }
 
+export interface ReportQuality {
+  readonly seq: number;
+  readonly ts: string;
+  readonly status: RunStatus;
+  readonly score: number;
+  readonly grade: QualityGrade;
+  readonly gatePassRate: number;
+  readonly gatesPassed: number;
+  readonly gatesTotal: number;
+  readonly reworkRounds: number;
+  readonly testPassRate: number;
+  readonly testsPassed: number;
+  readonly testsTotal: number;
+  readonly codeCoveragePercent: number | null;
+  readonly coverageSource: CoverageSource;
+  readonly recommendations: readonly string[];
+}
+
 export interface ReportViewModel {
   readonly runId: string;
   readonly status: RunStatus | "RUNNING";
@@ -127,6 +146,7 @@ export interface ReportViewModel {
   readonly memory: readonly ReportMemoryEvent[];
   readonly prompts: readonly ReportPromptVersion[];
   readonly contexts: readonly ReportContextAssembly[];
+  readonly quality: ReportQuality | null;
   readonly workflowSignature: string;
   readonly totalEvents: number;
   readonly displayedEvents: number;
@@ -164,6 +184,7 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
   let runStartedAt: number | null = null;
   let runFinishedAt: number | null = null;
   let finishSummary = "";
+  let quality: ReportQuality | null = null;
 
   ordered.forEach((event, index) => {
     runId = event.data.runId;
@@ -354,6 +375,25 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
         finishSummary = event.data.summary;
         runFinishedAt = timestamp(event.ts);
         break;
+      case "run.quality":
+        quality = {
+          seq: event.seq,
+          ts: event.ts,
+          status: event.data.status,
+          score: event.data.score,
+          grade: event.data.grade,
+          gatePassRate: event.data.gatePassRate,
+          gatesPassed: event.data.gatesPassed,
+          gatesTotal: event.data.gatesTotal,
+          reworkRounds: event.data.reworkRounds,
+          testPassRate: event.data.testPassRate,
+          testsPassed: event.data.testsPassed,
+          testsTotal: event.data.testsTotal,
+          codeCoveragePercent: event.data.codeCoveragePercent,
+          coverageSource: event.data.coverageSource,
+          recommendations: event.data.recommendations,
+        };
+        break;
     }
   });
 
@@ -402,6 +442,7 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
     memory,
     prompts,
     contexts,
+    quality,
     workflowSignature: workflowSignature(ordered),
     totalEvents: timeline.length,
     displayedEvents: limited.length,
@@ -520,6 +561,7 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "task.completed":
     case "task.failed":
     case "run.finished":
+    case "run.quality":
       return null;
   }
 }
@@ -551,7 +593,8 @@ function eventDetails(event: ForgeMindEvent): unknown {
     event.type === "negotiation.started" ||
     event.type === "negotiation.round" ||
     event.type === "negotiation.resolved" ||
-    event.type === "negotiation.escalated"
+    event.type === "negotiation.escalated" ||
+    event.type === "run.quality"
   ) {
     return event.data;
   }
@@ -647,6 +690,8 @@ function eventSummary(event: ForgeMindEvent): string {
       return `${event.data.kind ?? "UNKNOWN"}: ${event.data.error}`;
     case "run.finished":
       return `${event.data.status}: ${event.data.summary}`;
+    case "run.quality":
+      return `Quality ${event.data.grade}: ${event.data.score}/100`;
   }
 }
 
@@ -679,6 +724,7 @@ function isCritical(event: ReportTimelineEvent): boolean {
   return (
     event.type === "run.started" ||
     event.type === "run.finished" ||
+    event.type === "run.quality" ||
     event.type === "task.started" ||
     event.type === "task.completed" ||
     event.type === "task.failed" ||

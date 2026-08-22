@@ -100,6 +100,8 @@ function describe(event: ForgeMindEvent): string {
       return event.data.error;
     case "run.finished":
       return `${event.data.status}: ${event.data.summary}`;
+    case "run.quality":
+      return `Quality ${event.data.grade}: ${event.data.score}/100`;
   }
 }
 
