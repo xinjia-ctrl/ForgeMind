@@ -90,6 +90,7 @@ describe("negotiation triggers", () => {
     const mismatch = detectArtifactMismatch([
       {
         taskId: "api",
+        repo: "/repo/service",
         artifact: {
           path: "contracts/payment.json",
           kind: "source",
@@ -99,6 +100,7 @@ describe("negotiation triggers", () => {
       },
       {
         taskId: "web",
+        repo: "/repo/service",
         artifact: {
           path: "contracts/payment.json",
           kind: "source",
@@ -121,5 +123,7 @@ function rejection(attempt: number) {
     reason: "Boundary defect",
     feedback: "Fix boundary handling",
     evidence: "diff",
+    artifactFingerprint: "fingerprint",
+    verificationEvidence: [],
   };
 }

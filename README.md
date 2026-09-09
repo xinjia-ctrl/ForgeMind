@@ -1,204 +1,124 @@
 # ForgeMind
 
-ForgeMind is a TypeScript/Node multi-agent coding workflow. One natural-language requirement moves through a deterministic orchestration pipeline:
+ForgeMind 是一个面向 TypeScript/Node.js 项目的本地代码研发工作流，通过阶段化模型角色与确定性的测试、审查、策略和提交门禁，将自然语言需求推进为经过证据验证的代码提交。
 
-Current package release: `3.0.0` (publishable; runtime files are limited to `dist/src`).
+> 项目状态：面向生产问题设计的本地参考实现。它不是托管式 IDE、多用户服务，也不会自主合并代码。
 
 ```text
-PLAN → ARCH → CODE ⇄ REVIEW ⇄ TEST → COMMIT
+档位选择 → PLAN → 可选 ARCH → 有界 CODE 循环
+                                ↑          ↓
+                                └── 返工 ← TEST → REVIEW → COMMIT
 ```
 
-The Orchestrator is the only decision-maker. Agents never call one another: they exchange immutable `TaskContext` decisions and bounded workspace artifacts. Review and test are mandatory gates, every interaction is written to a versioned JSONL event log, and every run is isolated on a new `forgemind/<run-id>` branch.
+Orchestrator 统一控制流程。Agent 之间不会互相调用，也不能自行创建工具；各阶段只传递不可变任务上下文、结构化验收条件、受限产物和绑定 verifier 的证据。
 
-## Requirements
+## 为什么做这个项目
 
-- Node.js 22 or newer
-- Git
-- Docker or Podman for the default command sandbox
-- An OpenAI-compatible chat-completions endpoint
-- A clean target Git repository with an existing commit and Git author configured
+许多 Coding Agent Demo 会在模型声称“任务完成”时停止。ForgeMind 把完成判断交给外部证据：
 
-## Setup
+- 每条验收条件必须绑定已注册的测试套件、测试用例、文件断言、行为探针或审查 rubric。
+- TEST 与 REVIEW 的证据必须绑定同一个工作区指纹；两个门禁之间代码发生变化时，COMMIT 会被阻止。
+- 只有 CODE 使用自主循环，并对步骤、动作、重试、工具、Token 消耗和停止条件设置上限。
+- 被中断的写操作通过 `PLANNED → EXECUTED → VERIFIED` 日志恢复；文件状态无法安全对账时默认停止。
+- 工具策略、审批、路径约束、沙箱证据和运行事件均会落盘，可用于回放和离线报告。
+
+## 已实现范围
+
+| 领域     | 当前实现                                                              |
+| -------- | --------------------------------------------------------------------- |
+| 工作流   | 确定性档位选择；PLAN、可选 ARCH、CODE、TEST、REVIEW、COMMIT           |
+| 验收验证 | 结构化验收契约、注册式 verifier、累积返工证据、产物指纹               |
+| 恢复机制 | 共享运行预算、取消、阶段 checkpoint、运行清单、动作日志               |
+| 代码隔离 | 每次运行使用独立 Git 分支；每个 DAG 任务使用独立 worktree；不自动合并 |
+| 权限治理 | 阶段工具白名单、allow/approve/deny 策略、可选 RBAC、审计导出          |
+| 命令执行 | 默认使用 digest 固定的 Docker/Podman 沙箱；可显式启用受信任本机模式   |
+| 可观测性 | 版本化 JSONL 事件、回放签名、自包含离线 HTML 报告                     |
+| 可选扩展 | 项目记忆、语义检索索引、多仓库 DAG、GitHub/Jira/CI 适配器             |
+
+## 验证快照
+
+最近一次本地验证时间为 2026-09-08：
+
+- `npm run check`：登记 204 项测试，201 项通过，3 项依赖外部环境的 smoke 测试跳过。
+- 真实 Agent 评测：使用 `deepseek-v4-flash` 的 5 个受控场景全部通过，其中包含一次自动返工、一次崩溃恢复和一次冲突裁决。
+- 发布包预检：构建和包内容检查成功。
+
+这五个真实 Agent 场景使用的是受控小型仓库，不代表通用 Coding Agent 基准。准确的评测范围和限制见[评估说明](docs/EVALUATION.md)。
+
+## 快速开始
+
+环境要求：Node.js 22+、Git，以及一个兼容 OpenAI Chat Completions 协议的模型服务。
 
 ```bash
-npm install
+npm ci
+cp .env.example .env
+# 在 .env 中填写准备使用的模型供应商密钥。
+
+npm run web -- --config ./forgemind-local.config.json
+```
+
+浏览器打开 `http://127.0.0.1:3210`。仓库附带的本地配置会在宿主机执行已批准的测试命令，仅适合受信任的演示仓库。
+
+如果需要隔离执行，请提供包含 digest 固定容器镜像的策略文件：
+
+```bash
 npm run build
-```
-
-## Run
-
-```bash
-export OPENAI_API_KEY="..."
-export FORGEMIND_MODEL="gpt-4.1-mini"
 
 node dist/src/runtime/cli.js run \
   --repo /absolute/path/to/target-repo \
-  --requirement "Add a health-check endpoint with tests" \
+  --requirement "增加健康检查接口并补充测试" \
   --config /absolute/path/to/forgemind.config.json
 ```
 
-The target repository must be clean. ForgeMind creates a new branch and never performs a merge. In particular, it never merges `test` into a development branch. Failed runs retain their branch and changes for audit and recovery.
+目标必须是包含至少一个提交且没有未提交修改的 Git 仓库。ForgeMind 会创建 `forgemind/<run-id>` 分支，失败时保留分支和证据供排查，并且不会自动合并生成的修改。
 
-For a requirement spanning multiple repositories, use the DAG runner:
+对于跨多个仓库的需求：
 
 ```bash
 node dist/src/runtime/cli.js dag run \
   --repos /absolute/path/to/service,/absolute/path/to/web \
-  --requirement "Add a feature across the service and web client" \
+  --requirement "为服务端和 Web 客户端增加同一个功能" \
   --max-concurrency 4 \
   --yes
 ```
 
-The planning agent binds each DAG task to an allowlisted repository. Every task runs in a separate Git linked worktree, branch, sandbox, test gate, and child EventLog. Source repositories are not switched or modified. Worktrees are retained for audit; their default root is the operating system temporary directory and can be made durable with `--worktrees-root <path>`. Before dependent tasks start, conflicting meanings for the same cross-task artifact path trigger bounded negotiation; resolved `DecisionRecord`s are returned with the DAG result and written to L3 project memory when memory is enabled. A PR-candidate JSON artifact is produced only when all tasks succeed. ForgeMind never merges those branches.
+每个 DAG 任务在独立 linked worktree 中执行，并产出包含 commit、产物、验收证据和未完成项的版本化 handoff。成功的 DAG 只生成 PR candidate；除非另行配置外部反馈适配器，否则不会推送或合并代码。
 
-## Enterprise RBAC and audit export
-
-RBAC is opt-in for backward compatibility and deny-by-default once an actor is supplied. A strict actor policy maps identities to roles and repository/team scopes:
-
-```json
-{
-  "actors": [
-    {
-      "id": "alice",
-      "role": "approver",
-      "repos": ["/absolute/path/to/target-repo"],
-      "teams": ["platform"]
-    }
-  ]
-}
-```
-
-Pass `--actor-policy /path/to/actors.json --actor alice` to `run` or `dag run`. ForgeMind checks Run permission before creating a branch or worktree. Approval policy rules may declare `risk` as `low`, `medium`, or `high`; medium risk requires a developer and high risk requires an approver. Actor, role, and risk are recorded on approval events and reports.
-
-Export a bounded, read-only audit projection from EventLog JSONL files:
-
-```bash
-node dist/src/runtime/cli.js audit export \
-  --repo /absolute/path/to/target-repo \
-  --from 2026-08-01T00:00:00Z \
-  --to 2026-08-13T23:59:59Z \
-  --actor-policy /path/to/actors.json \
-  --actor alice \
-  --format csv
-```
-
-Audit queries require an explicit window of at most 31 days and support `--filter-actor`, `--filter-repo`, and `--status`. Exports are written under the repository's Git metadata in `forgemind/audit/`; JSON and formula-injection-safe CSV are generated from the same projection.
-
-The test command is auto-detected from `package.json`; it can be set explicitly to an allowlisted, shell-free test invocation:
-
-```bash
-node dist/src/runtime/cli.js run \
-  --repo /absolute/path/to/target-repo \
-  --requirement "..." \
-  --test-command "npm run test"
-```
-
-Git commit hooks run by default. For a trusted automation-only repository, they can be explicitly bypassed with `--skip-git-hooks`; this choice is included in the tool-policy audit record.
-
-The production default is fail-fast: command execution requires Docker or Podman and a digest-pinned image. A minimal policy file is:
-
-```json
-{
-  "defaultMode": "deny",
-  "sandbox": {
-    "mode": "container",
-    "runtime": "auto",
-    "image": "your-test-image@sha256:<64-hex-digest>",
-    "cpu": 1,
-    "memoryMb": 512,
-    "pidsLimit": 128,
-    "network": false
-  }
-}
-```
-
-Rules support `allow`, `approve`, and `deny`. Interactive terminals ask before `approve` actions; `--yes` records automatic approval and `--no-approve` rejects them. `sandbox.mode=local` is an explicit trusted-environment fallback and is accepted only with `defaultMode=deny`.
-
-## Replay
-
-Run events live under the target repository's Git metadata directory, so they do not pollute the generated commit:
+## 报告与回放
 
 ```bash
 node dist/src/runtime/cli.js replay \
   --repo /absolute/path/to/target-repo \
   --run-id <run-id>
-```
 
-`workflowTrace` and `workflowSignature` normalize those events into a stable process signature so identical inputs can be checked for the same stage sequence, tool outcomes, and gate decisions.
-
-## Optional project memory
-
-Memory is disabled by default. Enable deterministic L2 episodic retrieval, L3 project memory, and L4 semantic recall explicitly:
-
-```bash
-node dist/src/runtime/cli.js run \
-  --repo /absolute/path/to/target-repo \
-  --requirement "Add a health-check endpoint with tests" \
-  --memory \
-  --config /absolute/path/to/forgemind.config.json
-```
-
-Historical run outcomes are retrieved from the JSONL EventLog, while architecture decisions, rejected-gate lessons, and deterministic run-quality assessments are stored under `.forgemind/memory/`. L4 semantic recall reads those project documents with a zero-dependency lexical-vector + BM25 scorer (`LexicalEmbeddingProvider`) or an injected `EmbeddingProvider`. Project memory is generated by deterministic rules, injected read-only into PLAN and ARCH, and excluded locally from Git commits. Recall and storage decisions remain visible in the event log and report.
-
-For an OpenAI-compatible external vector endpoint, inject `OpenAICompatibleEmbeddingProvider` with an explicit model and dimension. Responses are rejected unless they contain exactly that many finite vector values.
-
-## Persistent active-layer state
-
-Production `AgenticWatchService` instances can use `FileAgenticStateStore` to atomically checkpoint polling cursors, event TTL dedupe, object cooldowns, deferred work, sliding-window rate state, daily quota counts, and failed dispatch retries. Keep the file in service data or `<git-dir>/forgemind/agentic/`, outside the tracked worktree. State is restored lazily before accepting or polling events; call `await watch.restore()` when cursor inspection is needed before the first poll. Dispatch requests retain their stable `ruleId:eventId` idempotency key across recovery.
-
-## GitHub, Jira, and CI integration
-
-The active layer includes production-facing adapters rather than vendor payloads leaking into the workflow:
-
-- `GitHubWebhookReceiver`, `JiraWebhookReceiver`, and `CiWebhookReceiver` verify SHA-256 HMAC signatures over the untouched request bytes before parsing JSON. `handleNodeWebhook` mounts any receiver on a Node HTTP server with bounded request bodies.
-- `GitHubWorkflowRunPoller`, `JiraIssuePoller`, and `CiEventPoller` provide cursor-based fallback ingestion. Watch cursors advance only after every event in the batch is handled.
-- `ForgeMindAgenticRunDispatcher` persists an idempotency record before execution and routes one target to `runForgeMind` or multiple targets to `runDagForgeMind`. A known failure gets a new attempt id; an ambiguous crash record remains fail-closed for reconciliation.
-- `AgenticFeedbackCoordinator` pushes generated branches, creates or reuses GitHub pull requests, and idempotently writes GitHub Issue/PR, Jira Issue, or generic CI feedback. It never merges a branch and explicitly rejects `test` as a PR source.
-
-Store the watch checkpoint and `FileAgenticDispatchStore` directory outside the worktree. Configure the GitHub/Jira tokens, webhook secrets, repository-to-local-path resolver, and base branches through the hosting service; secrets are never part of `AgenticRunRequest` or EventLog data.
-
-## Offline report
-
-Generate a self-contained visual report for any recorded run:
-
-```bash
 node dist/src/runtime/cli.js report \
   --repo /absolute/path/to/target-repo \
   --run-id <run-id>
 ```
 
-The report is written to `<git-dir>/forgemind/reports/<run-id>.html`. It needs no server or network connection and shows the chronological stage/attempt timeline, gate rework loops, typed failures, deterministic quality score and recommendations, token and tool statistics, audited tool details, artifacts, policy/approval security events, memory use, prompt versions, injected-context sources, and the workflow signature. Test commands may emit `FORGEMIND_COVERAGE=<0-100>` as explicit code-coverage evidence; otherwise coverage is reported as unavailable.
+运行产物保存在目标仓库的 Git metadata 中，不会进入生成的 commit。离线报告展示阶段时间线、返工回路、验收证据、失败信息、预算、审计动作、记忆使用情况和工作流签名。
 
-## Quality checks
-
-```bash
-npm run check
-```
-
-The quality gate runs strict TypeScript checks, type-aware ESLint, Prettier verification, and the complete test suite. Coverage includes orchestration, policy and approval, container isolation, layered memory, structured-output fallback, prompt resources, context ranking, concurrent event logging, workspace search, report panels, and a two-run memory E2E.
-
-Release environments can run the real dependency smoke gate:
+## 质量检查
 
 ```bash
-FORGEMIND_SMOKE_CONTAINER_IMAGE='node@sha256:<64-hex-digest>' \
-FORGEMIND_SMOKE_CONTAINER_RUNTIME=auto \
-OPENAI_API_KEY='...' \
-FORGEMIND_SMOKE_MODEL='...' \
-FORGEMIND_SMOKE_EMBEDDING_MODEL='...' \
-FORGEMIND_SMOKE_EMBEDDING_DIMENSION=1536 \
-npm run test:smoke:release
+npm run check             # 类型检查、Lint、格式和完整测试
+npm run prompt:contract   # Prompt 与 Schema 合约回归
+npm run eval:real         # 真实模型、编辑、测试和提交；需要模型密钥
+npm run test:smoke        # 外部依赖 smoke 检查
 ```
 
-`OPENAI_BASE_URL` selects an OpenAI-compatible endpoint. The normal `test:smoke` command skips unavailable external dependencies; `test:smoke:release` fails when any real container, chat model, or vector prerequisite is missing. The persisted-dispatch recovery smoke always runs.
+`prompt:contract` 是结构回归测试，不是模型效果基准。`eval:real` 会将最近一次结果写入 `evals/results/latest-real-agent.json`。
 
-Prompt changes also have an explicit deterministic evaluation gate:
+## 文档
 
-```bash
-npm run eval
-```
+- [文档索引](docs/README.md)
+- [当前产品范围](docs/PRD.md)
+- [架构与设计决策](docs/ARCHITECTURE.md)
+- [产品使用手册](docs/PRODUCT_MANUAL.md)
+- [评估方法与结果](docs/EVALUATION.md)
+- [已知限制与非目标](docs/LIMITATIONS.md)
+- [历史 PRD 与 ADR](docs/history/README.md)
 
-It compares the legacy and current prompt sets across four representative scenarios for pass rate, rework rounds, unauthorized tool calls, and estimated prompt tokens.
+## 安全边界
 
-## Security boundary
-
-Test commands run in a no-network, capability-dropped, resource-bounded container over a read-only source mount and an isolated writable layer. Action policy and approval precede execution; all decisions and sandbox evidence enter the EventLog. Exact command allowlists, path containment, symlink protection, bounded output, audit redaction, report re-redaction, HTML escaping, and an offline CSP remain in force.
+ForgeMind 通过精确命令白名单、路径与符号链接检查、输出限制、审计脱敏、审批门禁和可选的断网容器沙箱降低风险。这些控制本身不能保证任意仓库都是安全的。在受信任本地环境之外使用前，请先阅读[已知限制](docs/LIMITATIONS.md)中的信任边界和未解决风险。

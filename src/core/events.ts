@@ -1,5 +1,5 @@
 import type { RiskLevel, Role } from "../auth/types.js";
-import type { CoverageSource, QualityGrade } from "../quality/types.js";
+import type { VerificationStrength } from "../quality/types.js";
 import type { RunStatus, StageId, StageStatus } from "./types.js";
 
 interface ActorIndex {
@@ -69,6 +69,13 @@ interface EventPayloadMap {
     readonly repo?: string;
     readonly parentRunId?: string;
     readonly actor?: string;
+    readonly profile?: "light" | "standard" | "dag";
+    readonly profileReason?: string;
+  };
+  readonly "run.resumed": {
+    readonly runId: string;
+    readonly phase: StageId;
+    readonly attempt: number;
   };
   readonly "task.started": {
     readonly runId: string;
@@ -116,6 +123,9 @@ interface EventPayloadMap {
     readonly stage: StageId;
     readonly scope: "working" | "episodic" | "project" | "semantic";
     readonly source: string;
+    readonly entryId: string;
+    readonly timestamp: string;
+    readonly confidence: number;
     readonly score: number;
     readonly reason: string;
     readonly content: unknown;
@@ -134,6 +144,7 @@ interface EventPayloadMap {
     readonly sections: readonly {
       readonly name: string;
       readonly source: string;
+      readonly trust?: "trusted" | "untrusted";
       readonly tokenEstimate: number;
       readonly references: readonly string[];
     }[];
@@ -187,12 +198,30 @@ interface EventPayloadMap {
     readonly reason: string;
     readonly feedback: string;
     readonly coveragePercent?: number;
+    readonly artifactFingerprint: string;
+    readonly verificationEvidence: readonly {
+      readonly criterionId: string;
+      readonly verifierKind: "test-suite" | "test-case" | "file" | "behavior" | "review";
+      readonly source: string;
+      readonly artifactFingerprint: string;
+      readonly passed: boolean;
+      readonly details: string;
+    }[];
   };
   readonly "gate.passed": {
     readonly runId: string;
     readonly stage: "REVIEW" | "TEST";
     readonly evidence: string;
     readonly coveragePercent?: number;
+    readonly artifactFingerprint: string;
+    readonly verificationEvidence: readonly {
+      readonly criterionId: string;
+      readonly verifierKind: "test-suite" | "test-case" | "file" | "behavior" | "review";
+      readonly source: string;
+      readonly artifactFingerprint: string;
+      readonly passed: boolean;
+      readonly details: string;
+    }[];
   };
   readonly "stage.completed": {
     readonly runId: string;
@@ -214,19 +243,13 @@ interface EventPayloadMap {
   readonly "run.quality": {
     readonly runId: string;
     readonly requirement: string;
-    readonly status: RunStatus;
-    readonly score: number;
-    readonly grade: QualityGrade;
-    readonly gatePassRate: number;
-    readonly gatesPassed: number;
-    readonly gatesTotal: number;
+    readonly outcome: "succeeded" | "failed";
+    readonly evidenceCompleteness: number;
+    readonly verificationStrength: VerificationStrength;
+    readonly coveragePercent: number | null;
     readonly reworkRounds: number;
-    readonly testPassRate: number;
-    readonly testsPassed: number;
-    readonly testsTotal: number;
-    readonly codeCoveragePercent: number | null;
-    readonly coverageSource: CoverageSource;
-    readonly recommendations: readonly string[];
+    readonly policyViolations: number;
+    readonly confidence: number;
   };
 }
 

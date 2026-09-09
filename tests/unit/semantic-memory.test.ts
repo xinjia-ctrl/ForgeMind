@@ -3,9 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { DEFAULT_TOKEN_BUDGETS } from "../../src/config/budgets.js";
-import { createTaskContext, withArchitecture } from "../../src/core/context.js";
-import type { ArtifactRef } from "../../src/core/types.js";
 import { ProjectMemory } from "../../src/memory/project-memory.js";
 import {
   type EmbeddingProvider,
@@ -187,30 +184,25 @@ async function storeArchitectureDecisions(
   repository: string,
   decisions: readonly string[],
 ): Promise<void> {
-  const artifact: ArtifactRef = {
-    path: "architecture.md",
-    kind: "architecture",
-    stage: "ARCH",
-    summary: "Semantic memory fixture",
-  };
-  const context = withArchitecture(
-    createTaskContext({
-      runId: "semantic-fixture-run",
-      requirement: "Exercise semantic memory",
-      repoPath: repository,
-      branch: "forgemind/semantic-fixture-run",
-      tokenBudget: DEFAULT_TOKEN_BUDGETS,
-    }),
-    {
-      decisions,
-      files: [],
-      risks: [],
-      summary: "Semantic memory fixture",
-    },
-    artifact,
-  );
-  await new ProjectMemory({ repositoryRoot: repository, writeEnabled: true }).remember(
-    context,
-    artifact,
-  );
+  const memory = new ProjectMemory({ repositoryRoot: repository, writeEnabled: true });
+  for (const [index, decision] of decisions.entries()) {
+    await memory.rememberDecisionRecord(
+      createDecisionRecord({
+        runId: `semantic-fixture-run-${index + 1}`,
+        topic: `Governed architecture decision ${index + 1}`,
+        trigger: "arch-conflict",
+        rounds: [
+          {
+            round: 1,
+            proposal: decision,
+            counter: "Keep the prior design",
+            status: "CONVERGED",
+          },
+        ],
+        decision,
+        escalated: false,
+        createdAt: `2026-08-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+      }),
+    );
+  }
 }

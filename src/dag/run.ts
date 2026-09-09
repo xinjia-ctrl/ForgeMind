@@ -7,13 +7,16 @@ import { assertValidRunId, EventLog } from "../core/event-log.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
 import { ProjectMemory } from "../memory/project-memory.js";
 import { ChatNegotiationTurnProvider, NegotiationProtocol } from "../negotiation/protocol.js";
+import { OneShotConflictResolver } from "../negotiation/resolver.js";
 import type { DecisionRecordStore } from "../negotiation/record.js";
 import type { DecisionRecord } from "../negotiation/types.js";
+import { DEFAULT_RUN_BUDGET, RunBudgetTracker, type RunBudget } from "../core/run-budget.js";
 import type { ApprovalGateway } from "../policy/gateway.js";
 import type { ProcessRunner } from "../sandbox/types.js";
 import {
   assertGitWorkspaceClean,
   inspectGitWorkspace,
+  integrateTaskDependency,
   prepareTaskWorktree,
   type GitWorkspace,
 } from "../runtime/git-workspace.js";
@@ -49,6 +52,9 @@ export interface DagRunOptions {
   readonly toolAllowlist?: readonly string[];
   readonly commandAllowlist?: readonly (readonly string[])[];
   readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
+  readonly signal?: AbortSignal;
+  readonly negotiationMode?: "one-shot" | "multi-round";
+  readonly runBudget?: RunBudget;
 }
 
 export interface DagTaskWorkspace {
@@ -96,21 +102,26 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
   }
   const parentRunId = options.parentRunId ?? createRunId();
   assertValidRunId(parentRunId);
-  const planner = new DagPlanner({
-    provider: options.provider,
-    model: options.model,
-    ...(options.maxTasks === undefined ? {} : { maxTasks: options.maxTasks }),
-  });
-  const plan = await planner.plan(
-    options.requirement,
-    repositories.map((repository) => repository.root),
-  );
   const parentEventsDirectory = path.join(
     repositories[0]?.commonGitDirectory ?? failNoRepositories(),
     "forgemind",
     "dag-runs",
   );
   const eventLog = await EventLog.create(parentEventsDirectory, parentRunId);
+  const runBudget = new RunBudgetTracker(options.runBudget ?? DEFAULT_RUN_BUDGET);
+  const planner = new DagPlanner({
+    provider: options.provider,
+    model: options.model,
+    eventLog,
+    runId: parentRunId,
+    runBudget,
+    ...(options.maxTasks === undefined ? {} : { maxTasks: options.maxTasks }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+  const plan = await planner.plan(
+    options.requirement,
+    repositories.map((repository) => repository.root),
+  );
   const repositoriesByRoot = new Map(
     repositories.map(
       (repository, index) =>
@@ -138,21 +149,34 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
           },
           risk: options.approvalRisk ?? ("high" as const),
         };
-  const negotiation = new NegotiationProtocol({
-    eventLog,
-    proposal: new ChatNegotiationTurnProvider({
-      provider: options.provider,
-      model: options.model,
-      eventLog,
-    }),
-    counter: new ChatNegotiationTurnProvider({
-      provider: options.provider,
-      model: options.model,
-      eventLog,
-    }),
-    approvalGateway,
-    ...(approvalContext === undefined ? {} : { approvalContext }),
-  });
+  const negotiation =
+    options.negotiationMode === "multi-round"
+      ? new NegotiationProtocol({
+          eventLog,
+          proposal: new ChatNegotiationTurnProvider({
+            provider: options.provider,
+            model: options.model,
+            eventLog,
+            runBudget,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          }),
+          counter: new ChatNegotiationTurnProvider({
+            provider: options.provider,
+            model: options.model,
+            eventLog,
+            runBudget,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          }),
+          approvalGateway,
+          ...(approvalContext === undefined ? {} : { approvalContext }),
+        })
+      : new OneShotConflictResolver({
+          provider: options.provider,
+          model: options.model,
+          eventLog,
+          runBudget,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
   const memory: DecisionRecordStore | undefined =
     options.memory === true
       ? {
@@ -172,13 +196,21 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
       if (repository === undefined) {
         throw new HardFailure(`Task ${task.taskId} targets unknown repository ${task.repo}`);
       }
+      const sameRepoDependencies = context.dependencies.filter(
+        (dependency) => dependency.repo === task.repo,
+      );
+      const baseDependency = sameRepoDependencies[0];
       const workspace = await prepareTaskWorktree({
         repositoryPath: repository.repository.root,
         parentRunId: context.parentRunId,
         taskId: task.taskId,
         runId: context.runId,
+        ...(baseDependency === undefined ? {} : { baseRef: baseDependency.commit }),
         ...(options.worktreesRoot === undefined ? {} : { worktreesRoot: options.worktreesRoot }),
       });
+      for (const dependency of sameRepoDependencies.slice(1)) {
+        await integrateTaskDependency(workspace.root, dependency);
+      }
       workspaces.set(task.taskId, {
         taskId: task.taskId,
         repo: repository.repository.root,
@@ -215,6 +247,11 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
           ? {}
           : { commandAllowlist: options.commandAllowlist }),
         ...(options.riskTransform === undefined ? {} : { riskTransform: options.riskTransform }),
+        acceptanceCriteria: task.acceptanceCriteria,
+        profile: "dag",
+        upstreamHandoffs: context.dependencies,
+        runBudgetTracker: runBudget,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       };
     },
   });
@@ -225,6 +262,7 @@ export async function runDagForgeMind(options: DagRunOptions): Promise<DagRunExe
     negotiation,
     ...(memory === undefined ? {} : { memory }),
     ...(options.maxConcurrency === undefined ? {} : { maxConcurrency: options.maxConcurrency }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   const result = await scheduler.run(plan.tasks);
   const prListPath =
@@ -310,7 +348,7 @@ async function persistPrList(
       stage: "COMMIT",
       path: filePath,
       kind: "pr-candidate-list",
-      summary: `${result.prList.length} PR candidates; no branches were merged`,
+      summary: `${result.prList.length} PR candidates; no target branches were merged`,
     },
   });
   return filePath;

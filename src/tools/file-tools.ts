@@ -43,7 +43,11 @@ export class ReadFileTool implements Tool {
         tokenCost: estimateTokens(bounded.text),
       };
     } catch (error) {
-      return { ok: false, error: errorMessage(error) };
+      return {
+        ok: false,
+        error: errorMessage(error),
+        ...(isMissing(error) ? { data: { code: "NOT_FOUND" } } : {}),
+      };
     }
   }
 }
@@ -156,6 +160,10 @@ function countOccurrences(content: string, search: string): number {
     index = content.indexOf(search, cursor);
   }
   return count;
+}
+
+function isMissing(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function boundText(text: string, maxBytes: number): { text: string; truncated: boolean } {

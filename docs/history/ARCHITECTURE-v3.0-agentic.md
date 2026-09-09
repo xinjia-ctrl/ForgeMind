@@ -1,9 +1,9 @@
 # ForgeMind 架构设计文档（ADR）— Agentic 研发操作系统（v3.0）
 
-> 对齐：`docs/PRD-v3.0-agentic.md`（主线）与 `docs/PRD-v3.0-os.md`（安全约束补充）  
+> 对齐：`PRD-v3.0-agentic.md`（主线）与 `PRD-v3.0-os.md`（安全约束补充）  
 > 前置：v1.0 DAG、v2.0 RBAC 与审计投影  
 > 状态：A1-A6 全部实现；宿主服务仅负责 HTTP 监听、凭据托管与仓库路径配置
-> 验证：`npm run check` 通过（151 项：148 通过，3 项真实依赖 smoke 条件跳过）
+> 验证：`npm run check` 通过（157 项：154 通过，3 项真实依赖 smoke 条件跳过）
 > 技术栈：TypeScript / Node，零运行时第三方依赖
 
 ---

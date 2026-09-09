@@ -1,4 +1,9 @@
-import type { ArtifactRef, RunStatus } from "../core/types.js";
+import type {
+  AcceptanceCriterion,
+  ArtifactRef,
+  RunStatus,
+  UpstreamHandoff,
+} from "../core/types.js";
 import type { DecisionRecord } from "../negotiation/types.js";
 
 export const TASK_STATUSES = ["SUCCEEDED", "FAILED", "BLOCKED"] as const;
@@ -10,6 +15,7 @@ export interface DagTask {
   readonly deps: readonly string[];
   readonly repo: string;
   readonly requirement: string;
+  readonly acceptanceCriteria: readonly AcceptanceCriterion[];
 }
 
 export interface DagPlan {
@@ -24,6 +30,7 @@ export interface TaskExecution {
   readonly summary: string;
   readonly artifacts: readonly ArtifactRef[];
   readonly eventLogPath?: string;
+  readonly handoff?: UpstreamHandoff;
 }
 
 export interface DagTaskResult {
@@ -33,6 +40,8 @@ export interface DagTaskResult {
   readonly status: TaskStatus;
   readonly branch?: string;
   readonly summary: string;
+  readonly commit?: string;
+  readonly upstreamCommits?: readonly string[];
 }
 
 export interface PRCandidate {
@@ -41,6 +50,8 @@ export interface PRCandidate {
   readonly branch: string;
   readonly requirement: string;
   readonly summary: string;
+  readonly baseBranch?: string;
+  readonly upstreamBranches: readonly string[];
 }
 
 export interface DagResult {
@@ -54,6 +65,10 @@ export interface DagResult {
 export interface TaskRunner {
   run(
     task: DagTask,
-    options: { readonly parentRunId: string; readonly runId: string },
+    options: {
+      readonly parentRunId: string;
+      readonly runId: string;
+      readonly dependencies: readonly UpstreamHandoff[];
+    },
   ): Promise<TaskExecution>;
 }

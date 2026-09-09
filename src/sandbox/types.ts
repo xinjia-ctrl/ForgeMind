@@ -21,6 +21,7 @@ export interface ProcessRunOptions {
   readonly cwd: string;
   readonly timeoutMs: number;
   readonly maxBytes: number;
+  readonly signal?: AbortSignal;
 }
 
 export interface ProcessRunner {

@@ -39,6 +39,7 @@ export class ContainerProcessRunner implements ProcessRunner {
       cwd: options.cwd,
       timeoutMs: options.timeoutMs,
       maxBytes: options.maxBytes,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     const cleanup =
       result.timedOut === true ? await this.cleanup(containerName, options.cwd) : null;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testSuiteCriterion } from "../../src/core/acceptance.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -227,7 +228,15 @@ function dagExecution(options: DagRunOptions): DagRunExecution {
     eventLogPath: `/events/${runId}.jsonl`,
     plan: {
       summary: "Cross repository change",
-      tasks: [{ taskId: "api", deps: [], repo: "/workspace/api", requirement: "Update API" }],
+      tasks: [
+        {
+          taskId: "api",
+          deps: [],
+          repo: "/workspace/api",
+          requirement: "Update API",
+          acceptanceCriteria: [testSuiteCriterion("AC-1", "API is updated")],
+        },
+      ],
     },
     result: {
       parentRunId: runId,
@@ -241,6 +250,7 @@ function dagExecution(options: DagRunOptions): DagRunExecution {
           branch: `forgemind/${runId}-api`,
           requirement: "Update API",
           summary: "API updated",
+          upstreamBranches: [],
         },
       ],
     },

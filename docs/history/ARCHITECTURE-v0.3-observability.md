@@ -2,7 +2,7 @@
 
 > 迭代：v0.3（第三轮，Phase 2 可观测性可视化）
 > 前置：v0.2 MVP 闭环已实现（23/23 测试通过）
-> 状态：已实现（31/31 测试通过，对齐 `docs/PRD-v0.3-observability.md`）
+> 状态：已实现（31/31 测试通过，对齐 `PRD-v0.3-observability.md`）
 > 技术栈：TypeScript / Node，沿用"零运行时第三方依赖"
 
 ---

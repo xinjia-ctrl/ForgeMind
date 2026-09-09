@@ -29,6 +29,7 @@ export async function runProcess(
     readonly cwd: string;
     readonly timeoutMs: number;
     readonly maxBytes: number;
+    readonly signal?: AbortSignal;
   },
 ): Promise<ProcessResult> {
   return await new Promise((resolve, reject) => {
@@ -67,9 +68,16 @@ export async function runProcess(
       setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
     }, options.timeoutMs);
     timeout.unref();
+    const abort = (): void => {
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted === true) abort();
 
     child.once("close", (code, signal) => {
       clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abort);
       if (signal !== null) {
         append("stderr", Buffer.from(`\nProcess terminated by ${signal}`));
       }

@@ -5,8 +5,10 @@ import type { ApprovalContext } from "../auth/types.js";
 import type { ApprovalGateway } from "../policy/gateway.js";
 import type { ActionRequest, PolicyResolver } from "../policy/types.js";
 import type { RiskLevel } from "../auth/types.js";
+import { isCancellation, throwIfCancelled } from "../core/errors.js";
 import { auditValue } from "./audit.js";
 import type { Tool, ToolPolicy, ToolResult } from "./types.js";
+import type { RunBudgetTracker } from "../core/run-budget.js";
 
 export class ToolRegistry {
   readonly #tools: ReadonlyMap<string, Tool>;
@@ -35,6 +37,7 @@ interface ScopedExecutorOptions {
   readonly approvalGateway: ApprovalGateway;
   readonly approvalContext?: ApprovalContext;
   readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
+  readonly runBudget?: RunBudgetTracker;
 }
 
 export class ScopedToolExecutor {
@@ -45,6 +48,8 @@ export class ScopedToolExecutor {
   }
 
   public async execute(name: string, args: unknown): Promise<ToolResult> {
+    this.#options.runBudget?.consumeToolCall();
+    throwIfCancelled(this.#options.policy.signal);
     let result: ToolResult;
     let actionPolicy = "stage-policy";
     const tool = this.#options.registry.get(name);
@@ -71,6 +76,10 @@ export class ScopedToolExecutor {
       try {
         result = await tool.execute(args, this.#options.policy);
       } catch (error) {
+        if (isCancellation(error) || this.#options.policy.signal?.aborted === true) {
+          throwIfCancelled(this.#options.policy.signal);
+          throw error;
+        }
         result = {
           ok: false,
           error: error instanceof Error ? error.message : String(error),
@@ -78,6 +87,7 @@ export class ScopedToolExecutor {
       }
     }
 
+    throwIfCancelled(this.#options.policy.signal);
     await this.recordToolCall(name, args, result, actionPolicy);
     return result;
   }

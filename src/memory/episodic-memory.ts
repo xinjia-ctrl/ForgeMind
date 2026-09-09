@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { ForgeMindEvent } from "../core/events.js";
 import { EventLog } from "../core/event-log.js";
+import { throwIfCancelled } from "../core/errors.js";
 import type { ArtifactRef, TaskContext } from "../core/types.js";
 import { keywords } from "./keywords.js";
 import type { MemoryProvider, RecallOptions, Retrieval } from "./memory-provider.js";
@@ -25,6 +26,7 @@ export class EpisodicMemory implements MemoryProvider {
   }
 
   public async recall(query: string, options: RecallOptions = {}): Promise<readonly Retrieval[]> {
+    throwIfCancelled(options.signal);
     if (options.scopes !== undefined && !options.scopes.includes("episodic")) return [];
     const queryTerms = keywords(query);
     let files: readonly string[];
@@ -48,6 +50,7 @@ export class EpisodicMemory implements MemoryProvider {
           return episodeRetrieval(queryTerms, file, events, options);
         }),
     );
+    throwIfCancelled(options.signal);
     return episodes
       .filter((item): item is Retrieval => item !== null)
       .sort((left, right) => right.score - left.score || right.source.localeCompare(left.source))
@@ -82,8 +85,11 @@ function episodeRetrieval(
     evidence.length === 0 ? "No rejected gates or stage failures." : evidence.join("\n"),
   ].join("\n");
   return {
+    entryId: started.data.runId,
     content,
     source: path.join("runs", file),
+    timestamp: finished.ts,
+    confidence: finished.data.status === "SUCCEEDED" ? 0.8 : 0.6,
     score: overlap.length + (finished.data.status === "FAILED" ? 0.25 : 0.1),
     scope: "episodic",
     reason: `requirement keyword overlap: ${overlap.join(", ") || "empty query"}; status=${finished.data.status}`,

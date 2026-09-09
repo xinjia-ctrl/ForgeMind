@@ -7,6 +7,7 @@ import type { RunOptions } from "../../src/runtime/run.js";
 import { ForgeMindTaskRunner } from "../../src/dag/task-runner.js";
 import type { DagTask } from "../../src/dag/types.js";
 import { FakeChatProvider } from "../../src/llm/fake-provider.js";
+import { testSuiteCriterion } from "../../src/core/acceptance.js";
 
 it("adapts a DAG task to a child run with parent and task indexes", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-task-runner-"));
@@ -28,7 +29,12 @@ it("adapts a DAG task to a child run with parent and task indexes", async () => 
               runId: options.runId ?? "missing",
               requirement: options.requirement,
               repo: { path: options.repoPath, branch: `forgemind/${options.runId ?? "missing"}` },
-              plan: null,
+              plan: {
+                objective: "Update API",
+                steps: [{ id: "1", title: "Update", description: "Update API" }],
+                acceptanceCriteria: [testSuiteCriterion("AC-1", "API is updated")],
+                summary: "Update API",
+              },
               architecture: null,
               artifacts: [
                 {
@@ -49,8 +55,63 @@ it("adapts a DAG task to a child run with parent and task indexes", async () => 
                   stage: "CODE",
                   summary: "Final API contract",
                 },
+                {
+                  path: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  kind: "commit",
+                  stage: "COMMIT",
+                  summary: "feat: update API",
+                },
               ],
-              gates: [],
+              gates: [
+                {
+                  stage: "TEST",
+                  attempt: 1,
+                  passed: false,
+                  reason: "Failed",
+                  feedback: "Fix the old failure",
+                  evidence: "Old test failure",
+                  artifactFingerprint: "old-fingerprint",
+                  verificationEvidence: [
+                    {
+                      criterionId: "AC-1",
+                      verifierKind: "test-suite",
+                      source: "test:command:primary",
+                      artifactFingerprint: "old-fingerprint",
+                      passed: false,
+                      details: "Old failure",
+                    },
+                  ],
+                },
+                {
+                  stage: "TEST",
+                  attempt: 1,
+                  passed: true,
+                  reason: "Passed",
+                  feedback: "None",
+                  evidence: "Tested",
+                  artifactFingerprint: "fingerprint",
+                  verificationEvidence: [
+                    {
+                      criterionId: "AC-1",
+                      verifierKind: "test-suite",
+                      source: "test:command:primary",
+                      artifactFingerprint: "fingerprint",
+                      passed: true,
+                      details: "API tests passed",
+                    },
+                  ],
+                },
+                {
+                  stage: "REVIEW",
+                  attempt: 1,
+                  passed: true,
+                  reason: "Approved",
+                  feedback: "None",
+                  evidence: "Reviewed",
+                  artifactFingerprint: "fingerprint",
+                  verificationEvidence: [],
+                },
+              ],
               meta: {
                 attempt: { stage: "PLAN", count: 1 },
                 tokenBudget: {
@@ -73,8 +134,13 @@ it("adapts a DAG task to a child run with parent and task indexes", async () => 
       deps: [],
       repo: "/api",
       requirement: "Add API",
+      acceptanceCriteria: [testSuiteCriterion("AC-1", "API is updated")],
     };
-    const result = await runner.run(task, { parentRunId: "parent", runId: "child" });
+    const result = await runner.run(task, {
+      parentRunId: "parent",
+      runId: "child",
+      dependencies: [],
+    });
 
     assert.equal(result.runId, "child");
     assert.ok(received);
@@ -87,8 +153,13 @@ it("adapts a DAG task to a child run with parent and task indexes", async () => 
         kind: "source",
         stage: "CODE",
         summary: "Final API contract",
+        version: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     ]);
+    const handoff = result.handoff;
+    assert.ok(handoff);
+    assert.equal(handoff.verificationEvidence.length, 1);
+    assert.equal(handoff.verificationEvidence[0]?.passed, true);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -106,7 +177,7 @@ it("rejects sequential workspace reuse by different tasks", async () => {
       execute: (options) =>
         Promise.resolve({
           result: {
-            status: "SUCCEEDED",
+            status: "FAILED",
             summary: "done",
             context: {
               runId: options.runId ?? "missing",
@@ -133,14 +204,26 @@ it("rejects sequential workspace reuse by different tasks", async () => {
         }),
     });
     await runner.run(
-      { taskId: "one", deps: [], repo: "/repo", requirement: "One" },
-      { parentRunId: "parent", runId: "child-one" },
+      {
+        taskId: "one",
+        deps: [],
+        repo: "/repo",
+        requirement: "One",
+        acceptanceCriteria: [testSuiteCriterion("AC-1", "One completes")],
+      },
+      { parentRunId: "parent", runId: "child-one", dependencies: [] },
     );
     await assert.rejects(
       () =>
         runner.run(
-          { taskId: "two", deps: ["one"], repo: "/repo", requirement: "Two" },
-          { parentRunId: "parent", runId: "child-two" },
+          {
+            taskId: "two",
+            deps: ["one"],
+            repo: "/repo",
+            requirement: "Two",
+            acceptanceCriteria: [testSuiteCriterion("AC-1", "Two completes")],
+          },
+          { parentRunId: "parent", runId: "child-two", dependencies: [] },
         ),
       /independent workspaces/,
     );

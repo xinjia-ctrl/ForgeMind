@@ -119,6 +119,38 @@ export class JiraApiClient {
     return { id: identifier(response["id"], "Jira comment id"), created: true };
   }
 
+  public async verifyIssueComment(
+    issueIdOrKey: string,
+    idempotencyKey: string,
+    expectedId: string,
+  ): Promise<boolean> {
+    const issue = encodeURIComponent(requiredText(issueIdOrKey, "Jira issue id"));
+    const marker = feedbackMarker(idempotencyKey);
+    let startAt = 0;
+    for (let page = 0; page < 10; page += 1) {
+      const response = objectValue(
+        await this.request(
+          `/rest/api/3/issue/${issue}/comment?startAt=${startAt}&maxResults=100&orderBy=-created`,
+        ),
+        "Jira comments response",
+      );
+      const rawComments: unknown = response["comments"];
+      if (!Array.isArray(rawComments)) throw new JiraApiError("Jira comments are invalid", 502);
+      const comments: readonly unknown[] = rawComments;
+      const match = comments.find((entry) => {
+        const comment = objectValue(entry, "Jira comment");
+        return (
+          identifier(comment["id"], "Jira comment id") === expectedId &&
+          jsonText(comment).includes(marker)
+        );
+      });
+      if (match !== undefined) return true;
+      if (comments.length < 100) return false;
+      startAt += comments.length;
+    }
+    return false;
+  }
+
   private async request(
     resource: string,
     options: { readonly method?: "POST"; readonly body?: unknown } = {},

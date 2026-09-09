@@ -3,6 +3,7 @@ import { lstat, mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { HardFailure } from "../core/errors.js";
+import type { UpstreamHandoff } from "../core/types.js";
 import { assertValidRunId, assertValidTaskId } from "../core/event-log.js";
 import { runProcess } from "../tools/process.js";
 
@@ -20,6 +21,7 @@ export interface TaskWorktreeOptions {
   readonly taskId: string;
   readonly runId: string;
   readonly worktreesRoot?: string;
+  readonly baseRef?: string;
 }
 
 export async function prepareGitWorkspace(
@@ -28,6 +30,7 @@ export async function prepareGitWorkspace(
 ): Promise<GitWorkspace> {
   const inspected = await inspectGitWorkspace(requestedPath);
   await assertGitWorkspaceClean(inspected.root);
+  await assertGitWorkspaceHasCommit(inspected.root);
   const branch = `forgemind/${runId}`;
   const check = await git(inspected.root, ["check-ref-format", "--branch", branch]);
   if (check.exitCode !== 0) throw new HardFailure(`Invalid run branch: ${branch}`);
@@ -44,7 +47,12 @@ export async function prepareTaskWorktree(options: TaskWorktreeOptions): Promise
   assertValidRunId(options.runId);
   const inspected = await inspectGitWorkspace(options.repositoryPath);
   await assertGitWorkspaceClean(inspected.root);
+  await assertGitWorkspaceHasCommit(inspected.root);
   const branch = `forgemind/${options.runId}`;
+  const baseRef = options.baseRef ?? inspected.originalBranch;
+  if (baseRef === "test" || baseRef.endsWith(":test")) {
+    throw new HardFailure("The test branch cannot be used as a task worktree base");
+  }
   const check = await git(inspected.root, ["check-ref-format", "--branch", branch]);
   if (check.exitCode !== 0) throw new HardFailure(`Invalid run branch: ${branch}`);
 
@@ -71,7 +79,7 @@ export async function prepareTaskWorktree(options: TaskWorktreeOptions): Promise
     "-b",
     branch,
     worktreePath,
-    inspected.originalBranch,
+    baseRef,
   ]);
   if (created.exitCode !== 0) {
     throw new HardFailure(`Cannot create task worktree ${worktreePath}: ${created.stderr.trim()}`);
@@ -85,6 +93,25 @@ export async function prepareTaskWorktree(options: TaskWorktreeOptions): Promise
     originalBranch: inspected.originalBranch,
     branch,
   };
+}
+
+export async function integrateTaskDependency(
+  workspaceRoot: string,
+  dependency: Pick<UpstreamHandoff, "taskId" | "branch" | "commit">,
+): Promise<void> {
+  if (dependency.branch === "test" || dependency.branch.endsWith(":test")) {
+    throw new HardFailure("The test branch cannot be merged into a task worktree");
+  }
+  if (!/^[a-f0-9]{7,64}$/i.test(dependency.commit)) {
+    throw new HardFailure(`Dependency ${dependency.taskId} has an invalid commit`);
+  }
+  const merged = await git(workspaceRoot, ["merge", "--no-edit", dependency.commit]);
+  if (merged.exitCode !== 0) {
+    await git(workspaceRoot, ["merge", "--abort"]);
+    throw new HardFailure(
+      `Cannot integrate dependency ${dependency.taskId}: ${merged.stderr.trim() || merged.stdout.trim()}`,
+    );
+  }
 }
 
 export async function inspectGitWorkspace(
@@ -129,6 +156,13 @@ export async function assertGitWorkspaceClean(repositoryRoot: string): Promise<v
   }
   if (status.stdout.trim().length > 0) {
     throw new HardFailure("Target repository must be clean before a ForgeMind run");
+  }
+}
+
+export async function assertGitWorkspaceHasCommit(repositoryRoot: string): Promise<void> {
+  const head = await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]);
+  if (head.exitCode !== 0) {
+    throw new HardFailure("Target repository must have at least one commit");
   }
 }
 

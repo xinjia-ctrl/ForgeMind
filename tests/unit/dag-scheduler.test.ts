@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EventLog } from "../../src/core/event-log.js";
+import { testSuiteCriterion } from "../../src/core/acceptance.js";
+import type { ArtifactRef } from "../../src/core/types.js";
 import { DagScheduler } from "../../src/dag/scheduler.js";
 import type { DagTask, TaskExecution, TaskRunner } from "../../src/dag/types.js";
 import { createDecisionRecord } from "../../src/negotiation/record.js";
@@ -62,7 +65,13 @@ describe("DAG scheduler", () => {
       maxConcurrency: 3,
     }).run([
       ...tasks(),
-      { taskId: "release", deps: ["integration"], repo: "/web", requirement: "Release" },
+      {
+        taskId: "release",
+        deps: ["integration"],
+        repo: "/web",
+        requirement: "Release",
+        acceptanceCriteria: [testSuiteCriterion("AC-1", "Release is ready")],
+      },
     ]);
 
     assert.equal(result.status, "PARTIAL");
@@ -86,9 +95,27 @@ describe("DAG scheduler", () => {
       taskRunner: runner,
       maxConcurrency: 2,
     }).run([
-      { taskId: "slow", deps: [], repo: "/slow", requirement: "Slow independent work" },
-      { taskId: "fast", deps: [], repo: "/fast", requirement: "Fast prerequisite" },
-      { taskId: "after-fast", deps: ["fast"], repo: "/fast", requirement: "Dependent work" },
+      {
+        taskId: "slow",
+        deps: [],
+        repo: "/slow",
+        requirement: "Slow independent work",
+        acceptanceCriteria: [testSuiteCriterion("AC-1", "Slow work completes")],
+      },
+      {
+        taskId: "fast",
+        deps: [],
+        repo: "/fast",
+        requirement: "Fast prerequisite",
+        acceptanceCriteria: [testSuiteCriterion("AC-1", "Fast work completes")],
+      },
+      {
+        taskId: "after-fast",
+        deps: ["fast"],
+        repo: "/fast",
+        requirement: "Dependent work",
+        acceptanceCriteria: [testSuiteCriterion("AC-1", "Dependent work uses fast output")],
+      },
     ]);
 
     assert.equal(result.status, "SUCCEEDED");
@@ -125,18 +152,46 @@ describe("DAG scheduler", () => {
     assert.equal(result.decisionRecords.length, 1);
     assert.deepEqual(stored, result.decisionRecords);
     assert.ok(runner.integrationStartedAfterResolution);
+    assert.equal(runner.integrationAcceptanceCriteria.at(-1)?.description, "Verify cents decision");
+  });
+
+  it("stops when conflict verification has no pending consumer task", async () => {
+    const negotiation = new ResolvingNegotiation();
+    await assert.rejects(
+      () =>
+        new DagScheduler({
+          parentRunId: "parent-unbound-mismatch",
+          taskRunner: new ArtifactRunner(() => negotiation.resolved),
+          negotiation,
+          maxConcurrency: 2,
+        }).run(tasks().slice(0, 2)),
+      /cannot be bound to a pending task/,
+    );
   });
 });
 
 function tasks(): readonly DagTask[] {
   return [
-    { taskId: "backend", deps: [], repo: "/api", requirement: "Add API" },
-    { taskId: "frontend", deps: [], repo: "/web", requirement: "Add UI" },
+    {
+      taskId: "backend",
+      deps: [],
+      repo: "/api",
+      requirement: "Add API",
+      acceptanceCriteria: [testSuiteCriterion("AC-1", "API is available")],
+    },
+    {
+      taskId: "frontend",
+      deps: [],
+      repo: "/api",
+      requirement: "Add UI",
+      acceptanceCriteria: [testSuiteCriterion("AC-1", "UI is available")],
+    },
     {
       taskId: "integration",
       deps: ["backend", "frontend"],
-      repo: "/web",
+      repo: "/api",
       requirement: "Integrate",
+      acceptanceCriteria: [testSuiteCriterion("AC-1", "UI and API integrate")],
     },
   ];
 }
@@ -170,6 +225,7 @@ class RecordingRunner implements TaskRunner {
       branch: `forgemind/${context.runId}`,
       summary: task.taskId === this.options.failedTask ? "failed" : "done",
       artifacts: [],
+      handoff: taskHandoff(task, context.runId, []),
     };
   }
 }
@@ -193,12 +249,14 @@ class VariableDelayRunner implements TaskRunner {
       branch: `forgemind/${context.runId}`,
       summary: "done",
       artifacts: [],
+      handoff: taskHandoff(task, context.runId, []),
     };
   }
 }
 
 class ArtifactRunner implements TaskRunner {
   public integrationStartedAfterResolution = false;
+  public integrationAcceptanceCriteria: DagTask["acceptanceCriteria"] = [];
 
   public constructor(private readonly negotiationResolved: () => boolean) {}
 
@@ -208,6 +266,7 @@ class ArtifactRunner implements TaskRunner {
   ): Promise<TaskExecution> {
     if (task.taskId === "integration") {
       this.integrationStartedAfterResolution = this.negotiationResolved();
+      this.integrationAcceptanceCriteria = task.acceptanceCriteria;
     }
     const summary =
       task.taskId === "backend"
@@ -215,21 +274,54 @@ class ArtifactRunner implements TaskRunner {
         : task.taskId === "frontend"
           ? "Amount is represented in decimal dollars"
           : "Use the negotiated payment amount representation";
+    const artifacts = [
+      {
+        path: "contracts/payment.json",
+        kind: "source" as const,
+        stage: "CODE" as const,
+        summary,
+      },
+    ];
     return Promise.resolve({
       runId: context.runId,
       status: "SUCCEEDED",
       branch: `forgemind/${context.runId}`,
       summary: "done",
-      artifacts: [
-        {
-          path: "contracts/payment.json",
-          kind: "source",
-          stage: "CODE",
-          summary,
-        },
-      ],
+      artifacts,
+      handoff: taskHandoff(task, context.runId, artifacts),
     });
   }
+}
+
+function taskHandoff(task: DagTask, runId: string, artifacts: readonly ArtifactRef[]) {
+  const commit = createHash("sha256").update(runId).digest("hex");
+  return {
+    taskId: task.taskId,
+    repo: task.repo,
+    branch: `forgemind/${runId}`,
+    commit,
+    summary: "done",
+    acceptanceCriteria: task.acceptanceCriteria,
+    verificationEvidence: task.acceptanceCriteria.map((criterion) => ({
+      criterionId: criterion.id,
+      verifierKind: criterion.verifier.kind,
+      source:
+        criterion.verifier.kind === "review"
+          ? "review:model"
+          : criterion.verifier.kind === "file"
+            ? `test:file:${criterion.verifier.assertion}`
+            : criterion.verifier.kind === "test-case"
+              ? `test:case:${criterion.verifier.commandId}`
+              : criterion.verifier.kind === "behavior"
+                ? `test:behavior:${criterion.verifier.probeId}`
+                : `test:command:${criterion.verifier.commandId}`,
+      artifactFingerprint: commit,
+      passed: true,
+      details: "Tested",
+    })),
+    artifacts: artifacts.map((artifact) => ({ ...artifact, version: commit })),
+    incompleteItems: [],
+  };
 }
 
 class ResolvingNegotiation implements NegotiationCoordinator {
@@ -252,6 +344,12 @@ class ResolvingNegotiation implements NegotiationCoordinator {
       trigger: request.trigger,
       rounds,
       decision: "Represent payment amounts in integer cents",
+      requiredVerification: [
+        {
+          description: "Verify cents decision",
+          verifier: { kind: "test-suite", commandId: "primary" },
+        },
+      ],
       escalated: false,
       createdAt: "2026-08-18T00:00:00.000Z",
     });

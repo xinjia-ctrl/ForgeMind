@@ -51,6 +51,14 @@ export class TokenBudgetTracker {
   public get usage(): Readonly<{ input: number; output: number }> {
     return { input: this.#inputUsed, output: this.#outputUsed };
   }
+
+  public get remainingInput(): number {
+    return this.#budget.input - this.#inputUsed;
+  }
+
+  public get remainingOutput(): number {
+    return this.#budget.output - this.#outputUsed;
+  }
 }
 
 function assertNonNegative(value: number): void {

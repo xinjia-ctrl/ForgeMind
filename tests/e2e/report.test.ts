@@ -36,7 +36,7 @@ it("generates offline reports through the CLI for successful and failed runs", a
       } else {
         assert.match(html, /SUCCEEDED/);
         assert.match(html, /QUALITY ASSESSMENT/);
-        assert.match(html, /EXCELLENT/);
+        assert.match(html, /strong/);
         assert.match(html, /96\.00%/);
       }
     }
@@ -64,19 +64,13 @@ async function createSuccessfulRun(directory: string): Promise<void> {
     data: {
       runId: "successful-report",
       requirement: "Generate a report",
-      status: "SUCCEEDED",
-      score: 96,
-      grade: "EXCELLENT",
-      gatePassRate: 100,
-      gatesPassed: 2,
-      gatesTotal: 2,
+      outcome: "succeeded",
+      evidenceCompleteness: 100,
+      verificationStrength: "strong",
+      coveragePercent: 96,
       reworkRounds: 0,
-      testPassRate: 100,
-      testsPassed: 1,
-      testsTotal: 1,
-      codeCoveragePercent: 96,
-      coverageSource: "test-output",
-      recommendations: [],
+      policyViolations: 0,
+      confidence: 1,
     },
   });
 }

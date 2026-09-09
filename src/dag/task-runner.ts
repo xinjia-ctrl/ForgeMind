@@ -1,5 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { HardFailure } from "../core/errors.js";
+import { assertAcceptanceSatisfied } from "../core/acceptance.js";
+import type { UpstreamHandoff } from "../core/types.js";
 import { runForgeMind, type RunExecution, type RunOptions } from "../runtime/run.js";
 import type { DagTask, TaskExecution, TaskRunner } from "./types.js";
 
@@ -13,7 +15,11 @@ type TaskRunOptions = Omit<
 export interface ForgeMindTaskRunnerOptions {
   readonly createRunOptions: (
     task: DagTask,
-    context: { readonly parentRunId: string; readonly runId: string },
+    context: {
+      readonly parentRunId: string;
+      readonly runId: string;
+      readonly dependencies: readonly UpstreamHandoff[];
+    },
   ) => Promise<TaskRunOptions> | TaskRunOptions;
   readonly execute?: (options: RunOptions) => Promise<RunExecution>;
 }
@@ -30,7 +36,11 @@ export class ForgeMindTaskRunner implements TaskRunner {
 
   public async run(
     task: DagTask,
-    context: { readonly parentRunId: string; readonly runId: string },
+    context: {
+      readonly parentRunId: string;
+      readonly runId: string;
+      readonly dependencies: readonly UpstreamHandoff[];
+    },
   ): Promise<TaskExecution> {
     const options = await this.#createRunOptions(task, context);
     const workspaceKey = await realpath(options.repoPath);
@@ -45,19 +55,62 @@ export class ForgeMindTaskRunner implements TaskRunner {
       ...options,
       repoPath: options.repoPath,
       requirement: task.requirement,
+      requirementTrust: "untrusted",
       runId: context.runId,
       parentRunId: context.parentRunId,
       taskId: task.taskId,
+      acceptanceCriteria: task.acceptanceCriteria,
+      upstreamHandoffs: context.dependencies,
     });
+    if (execution.result.status === "SUCCEEDED")
+      assertAcceptanceSatisfied(execution.result.context);
+    const commit = finalCommit(execution.result.context.artifacts);
+    const artifacts = finalCodeArtifacts(execution.result.context.artifacts).map((artifact) => ({
+      ...artifact,
+      ...(commit === undefined ? {} : { version: commit }),
+    }));
+    const verificationEvidence = finalVerificationEvidence(execution.result.context.gates);
     return {
       runId: execution.result.context.runId,
       status: execution.result.status,
       branch: execution.result.context.repo.branch,
       summary: execution.result.summary,
-      artifacts: finalCodeArtifacts(execution.result.context.artifacts),
+      artifacts,
       eventLogPath: execution.eventLogPath,
+      ...(commit === undefined || execution.result.context.plan === null
+        ? {}
+        : {
+            handoff: {
+              taskId: task.taskId,
+              repo: task.repo,
+              branch: execution.result.context.repo.branch,
+              commit,
+              summary: execution.result.summary,
+              acceptanceCriteria: execution.result.context.plan.acceptanceCriteria,
+              verificationEvidence,
+              artifacts,
+              incompleteItems: [],
+            },
+          }),
     };
   }
+}
+
+function finalVerificationEvidence(
+  gates: RunExecution["result"]["context"]["gates"],
+): UpstreamHandoff["verificationEvidence"] {
+  const latestTest = [...gates].reverse().find((gate) => gate.stage === "TEST");
+  const latestReview = [...gates].reverse().find((gate) => gate.stage === "REVIEW");
+  return [
+    ...(latestTest?.verificationEvidence ?? []),
+    ...(latestReview?.verificationEvidence ?? []),
+  ];
+}
+
+function finalCommit(
+  artifacts: RunExecution["result"]["context"]["artifacts"],
+): string | undefined {
+  return [...artifacts].reverse().find((artifact) => artifact.kind === "commit")?.path;
 }
 
 function finalCodeArtifacts(

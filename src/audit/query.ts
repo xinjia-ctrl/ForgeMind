@@ -256,7 +256,7 @@ function operationAndOutcome(event: ForgeMindEvent): {
     case "run.finished":
       return { outcome: event.data.status };
     case "run.quality":
-      return { operation: event.data.grade, outcome: String(event.data.score) };
+      return { operation: event.data.verificationStrength, outcome: event.data.outcome };
     case "task.completed":
       return { operation: event.data.taskId, outcome: "SUCCEEDED" };
     case "task.failed":

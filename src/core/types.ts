@@ -1,4 +1,4 @@
-export const STAGES = ["PLAN", "ARCH", "CODE", "REVIEW", "TEST", "COMMIT"] as const;
+export const STAGES = ["PLAN", "ARCH", "CODE", "TEST", "REVIEW", "COMMIT"] as const;
 
 export type StageId = (typeof STAGES)[number];
 export type GateStage = "REVIEW" | "TEST";
@@ -22,8 +22,33 @@ export interface PlanStep {
 export interface TaskPlan {
   readonly objective: string;
   readonly steps: readonly PlanStep[];
-  readonly acceptanceCriteria: readonly string[];
+  readonly acceptanceCriteria: readonly AcceptanceCriterion[];
   readonly summary: string;
+}
+
+export type RequiredEvidence = "test" | "review";
+
+export type AcceptanceVerifier =
+  | { readonly kind: "test-suite"; readonly commandId: string }
+  | {
+      readonly kind: "test-case";
+      readonly commandId: string;
+      readonly pattern: string;
+    }
+  | {
+      readonly kind: "file";
+      readonly path: string;
+      readonly assertion: "exists" | "absent" | "contains";
+      readonly value?: string;
+    }
+  | { readonly kind: "behavior"; readonly probeId: string }
+  | { readonly kind: "review"; readonly rubric: string };
+
+export interface AcceptanceCriterion {
+  readonly id: string;
+  readonly description: string;
+  readonly requiredEvidence: readonly RequiredEvidence[];
+  readonly verifier: AcceptanceVerifier;
 }
 
 export interface ArchitectureFile {
@@ -51,6 +76,7 @@ export interface ArtifactRef {
   readonly kind: ArtifactKind;
   readonly summary: string;
   readonly stage: StageId;
+  readonly version?: string;
 }
 
 export interface GateResult {
@@ -60,12 +86,26 @@ export interface GateResult {
   readonly reason: string;
   readonly feedback: string;
   readonly evidence: string;
+  readonly artifactFingerprint: string;
+  readonly verificationEvidence: readonly VerificationEvidence[];
   readonly coveragePercent?: number;
+}
+
+export interface VerificationEvidence {
+  readonly criterionId: string;
+  readonly verifierKind: AcceptanceVerifier["kind"];
+  readonly source: string;
+  readonly artifactFingerprint: string;
+  readonly passed: boolean;
+  readonly details: string;
 }
 
 export interface TaskContext {
   readonly runId: string;
   readonly requirement: string;
+  readonly requirementTrust?: "trusted" | "untrusted";
+  readonly requiredAcceptanceCriteria?: readonly AcceptanceCriterion[];
+  readonly upstreamHandoffs?: readonly UpstreamHandoff[];
   readonly repo: { readonly path: string; readonly branch: string };
   readonly plan: TaskPlan | null;
   readonly architecture: ArchDecision | null;
@@ -75,6 +115,18 @@ export interface TaskContext {
     readonly attempt: { readonly stage: StageId; readonly count: number };
     readonly tokenBudget: TokenBudgets;
   };
+}
+
+export interface UpstreamHandoff {
+  readonly taskId: string;
+  readonly repo: string;
+  readonly branch: string;
+  readonly commit: string;
+  readonly summary: string;
+  readonly acceptanceCriteria: readonly AcceptanceCriterion[];
+  readonly verificationEvidence: readonly VerificationEvidence[];
+  readonly artifacts: readonly ArtifactRef[];
+  readonly incompleteItems: readonly string[];
 }
 
 export interface StageInput {

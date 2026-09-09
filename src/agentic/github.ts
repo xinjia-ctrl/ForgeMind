@@ -112,6 +112,19 @@ export class GitHubApiClient {
     }
   }
 
+  public async verifyPullRequest(
+    input: GitHubPullRequestInput,
+    expectedNumber: number,
+  ): Promise<boolean> {
+    const owner = repositoryName(input.repository).owner;
+    const current = await this.findPullRequest(
+      input.repository,
+      `${owner}:${input.head}`,
+      input.base,
+    );
+    return current?.number === expectedNumber;
+  }
+
   public async commentIssue(
     repository: string,
     issueNumber: string | number,
@@ -144,6 +157,34 @@ export class GitHubApiClient {
       "GitHub create issue comment response",
     );
     return { ...commentResult(response), created: true };
+  }
+
+  public async verifyIssueComment(
+    repository: string,
+    issueNumber: string | number,
+    idempotencyKey: string,
+    expectedId: string,
+  ): Promise<boolean> {
+    const issue = identifier(issueNumber, "GitHub issue number");
+    const marker = feedbackMarker(idempotencyKey);
+    for (let page = 1; page <= 10; page += 1) {
+      const comments = arrayValue(
+        await this.request(
+          `/repos/${repositoryPath(repository)}/issues/${encodeURIComponent(issue)}/comments?per_page=100&page=${page}`,
+        ),
+        "GitHub issue comments response",
+      );
+      const match = comments.find((entry) => {
+        const comment = objectValue(entry, "GitHub issue comment");
+        return (
+          identifier(comment["id"], "GitHub comment id") === expectedId &&
+          optionalText(comment["body"])?.includes(marker) === true
+        );
+      });
+      if (match !== undefined) return true;
+      if (comments.length < 100) return false;
+    }
+    return false;
   }
 
   private async findPullRequest(

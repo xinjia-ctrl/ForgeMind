@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { MemoryProvider } from "../memory/memory-provider.js";
-import type { DecisionRecord, NegotiationRound, NegotiationTrigger } from "./types.js";
+import type {
+  DecisionRecord,
+  NegotiatedVerificationRequirement,
+  NegotiationRound,
+  NegotiationTrigger,
+} from "./types.js";
 
 export type DecisionRecordStore = Pick<MemoryProvider, "rememberDecisionRecord">;
 
@@ -10,6 +15,7 @@ export interface DecisionRecordInput {
   readonly trigger: NegotiationTrigger;
   readonly rounds: readonly NegotiationRound[];
   readonly decision: string;
+  readonly requiredVerification?: readonly NegotiatedVerificationRequirement[];
   readonly escalated: boolean;
   readonly createdAt?: string;
 }
@@ -21,12 +27,17 @@ export function createDecisionRecord(input: DecisionRecordInput): DecisionRecord
     { side: "proposal" as const, position: round.proposal },
     { side: "counter" as const, position: round.counter },
   ]);
+  const requiredVerification = input.requiredVerification ?? negotiatedReviewRequirement(decision);
+  if (requiredVerification.length === 0) {
+    throw new Error("Negotiation decision must include a verification requirement");
+  }
   const canonical = JSON.stringify({
     runId: input.runId,
     topic: input.topic.trim(),
     trigger: input.trigger,
     positions,
     decision,
+    requiredVerification,
     escalated: input.escalated,
   });
   return {
@@ -36,9 +47,17 @@ export function createDecisionRecord(input: DecisionRecordInput): DecisionRecord
     trigger: input.trigger,
     positions,
     decision,
+    requiredVerification,
     escalated: input.escalated,
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
+}
+
+function negotiatedReviewRequirement(
+  decision: string,
+): readonly NegotiatedVerificationRequirement[] {
+  const description = `Verify negotiated decision: ${decision}`;
+  return [{ description, verifier: { kind: "review", rubric: description } }];
 }
 
 export async function persistDecisionRecord(

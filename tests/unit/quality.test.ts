@@ -12,17 +12,23 @@ describe("run quality evaluation", () => {
         stage: "REVIEW",
         reason: "Missing boundary test",
         feedback: "Add coverage",
+        artifactFingerprint: "fingerprint",
+        verificationEvidence: [],
       }),
       event(2, "gate.passed", {
         runId: "quality-run",
         stage: "REVIEW",
         evidence: "Reviewed fix",
+        artifactFingerprint: "fingerprint",
+        verificationEvidence: [evidence("review:model", "review")],
       }),
       event(3, "gate.passed", {
         runId: "quality-run",
         stage: "TEST",
         evidence: "Tests passed",
         coveragePercent: 84.5,
+        artifactFingerprint: "fingerprint",
+        verificationEvidence: [evidence("test:case:primary", "test-case")],
       }),
       event(4, "run.finished", {
         runId: "quality-run",
@@ -33,29 +39,24 @@ describe("run quality evaluation", () => {
 
     assert.deepEqual(
       {
-        score: quality.score,
-        grade: quality.grade,
-        gatePassRate: quality.gatePassRate,
-        gatesPassed: quality.gatesPassed,
-        gatesTotal: quality.gatesTotal,
+        outcome: quality.outcome,
+        evidenceCompleteness: quality.evidenceCompleteness,
+        verificationStrength: quality.verificationStrength,
         reworkRounds: quality.reworkRounds,
-        testPassRate: quality.testPassRate,
-        codeCoveragePercent: quality.codeCoveragePercent,
-        coverageSource: quality.coverageSource,
+        coveragePercent: quality.coveragePercent,
+        policyViolations: quality.policyViolations,
+        confidence: quality.confidence,
       },
       {
-        score: 74,
-        grade: "NEEDS_ATTENTION",
-        gatePassRate: 66.67,
-        gatesPassed: 2,
-        gatesTotal: 3,
+        outcome: "succeeded",
+        evidenceCompleteness: 100,
+        verificationStrength: "strong",
         reworkRounds: 1,
-        testPassRate: 100,
-        codeCoveragePercent: 84.5,
-        coverageSource: "test-output",
+        coveragePercent: 84.5,
+        policyViolations: 0,
+        confidence: 1,
       },
     );
-    assert.match(quality.recommendations.join(" "), /required 1 rework round/);
   });
 
   it("reports unavailable coverage instead of inventing a percentage", () => {
@@ -67,11 +68,11 @@ describe("run quality evaluation", () => {
       }),
     ]);
 
-    assert.equal(quality.score, 0);
-    assert.equal(quality.grade, "POOR");
-    assert.equal(quality.codeCoveragePercent, null);
-    assert.equal(quality.coverageSource, "unavailable");
-    assert.match(quality.recommendations.join(" "), /FORGEMIND_COVERAGE/);
+    assert.equal(quality.outcome, "failed");
+    assert.equal(quality.evidenceCompleteness, 0);
+    assert.equal(quality.verificationStrength, "weak");
+    assert.equal(quality.coveragePercent, null);
+    assert.equal(quality.confidence, 0);
   });
 
   it("extracts only a bounded explicit coverage marker from test output", () => {
@@ -93,4 +94,15 @@ function event<K extends EventType>(
     type,
     data,
   } as Extract<ForgeMindEvent, { readonly type: K }>;
+}
+
+function evidence(source: string, verifierKind: "review" | "test-case") {
+  return {
+    criterionId: "AC-1",
+    verifierKind,
+    source,
+    artifactFingerprint: "fingerprint",
+    passed: true,
+    details: "Bound evidence",
+  };
 }

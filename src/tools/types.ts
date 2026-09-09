@@ -19,6 +19,7 @@ export interface ToolPolicyOptions {
   readonly maxResultBytes?: number;
   readonly commandTimeoutMs?: number;
   readonly skipGitHooks?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 export class ToolPolicy {
@@ -32,6 +33,7 @@ export class ToolPolicy {
   public readonly maxResultBytes: number;
   public readonly commandTimeoutMs: number;
   public readonly skipGitHooks: boolean;
+  public readonly signal: AbortSignal | undefined;
 
   public constructor(options: ToolPolicyOptions) {
     this.workspaceRoot = options.workspaceRoot;
@@ -44,6 +46,7 @@ export class ToolPolicy {
     this.maxResultBytes = options.maxResultBytes ?? 128_000;
     this.commandTimeoutMs = options.commandTimeoutMs ?? 120_000;
     this.skipGitHooks = options.skipGitHooks ?? false;
+    this.signal = options.signal;
   }
 
   public allowsCommand(command: readonly string[]): boolean {

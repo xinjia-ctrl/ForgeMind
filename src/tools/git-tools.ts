@@ -69,8 +69,8 @@ export class GitCommitTool implements Tool {
   public readonly description = "Stage all workspace changes and create one Git commit";
   public readonly parameters = {
     type: "object",
-    required: ["message"],
-    properties: { message: { type: "string" } },
+    required: ["message", "idempotencyKey"],
+    properties: { message: { type: "string" }, idempotencyKey: { type: "string" } },
   } as const;
 
   public async execute(args: unknown, policy: ToolPolicy): Promise<ToolResult> {
@@ -78,13 +78,31 @@ export class GitCommitTool implements Tool {
       if (!policy.writable || policy.stage !== "COMMIT") {
         return { ok: false, error: "git_commit requires the COMMIT write policy" };
       }
-      const message = stringArg(objectArgs(args), "message").trim();
+      const input = objectArgs(args);
+      const message = stringArg(input, "message").trim();
+      const rawIdempotencyKey = input["idempotencyKey"];
+      const idempotencyKey =
+        typeof rawIdempotencyKey === "string" ? rawIdempotencyKey.trim() : undefined;
       if (message.length === 0 || message.length > 200 || message.includes("\0")) {
         return { ok: false, error: "Commit message must contain 1-200 characters" };
       }
       const status = await git(policy, ["status", "--porcelain"]);
       if (status.exitCode !== 0) return processFailure(status);
       if (status.stdout.trim().length === 0) {
+        if (idempotencyKey !== undefined && idempotencyKey.length > 0) {
+          const lastMessage = await git(policy, ["log", "-1", "--format=%B"]);
+          const revision = await git(policy, ["rev-parse", "HEAD"]);
+          if (
+            lastMessage.exitCode === 0 &&
+            revision.exitCode === 0 &&
+            lastMessage.stdout.includes(`ForgeMind-Run: ${idempotencyKey}`)
+          ) {
+            return {
+              ok: true,
+              data: { commit: revision.stdout.trim(), output: "Reused prior idempotent commit" },
+            };
+          }
+        }
         return { ok: false, error: "No changes are available to commit" };
       }
       const add = await git(policy, ["add", "--all", "--"]);
@@ -94,6 +112,9 @@ export class GitCommitTool implements Tool {
         ...(policy.skipGitHooks ? ["--no-verify"] : []),
         "-m",
         message,
+        ...(idempotencyKey === undefined || idempotencyKey.length === 0
+          ? []
+          : ["-m", `ForgeMind-Run: ${idempotencyKey}`]),
       ]);
       if (commit.exitCode !== 0) return processFailure(commit);
       const revision = await git(policy, ["rev-parse", "HEAD"]);
@@ -129,6 +150,7 @@ async function git(policy: ToolPolicy, args: readonly string[]) {
     cwd: policy.workspaceRoot,
     timeoutMs: policy.commandTimeoutMs,
     maxBytes: policy.maxResultBytes,
+    ...(policy.signal === undefined ? {} : { signal: policy.signal }),
   });
 }
 

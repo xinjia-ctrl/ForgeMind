@@ -2,19 +2,19 @@ import { readFile } from "node:fs/promises";
 import type { StageId } from "../core/types.js";
 
 export const PROMPT_VERSIONS = {
-  PLAN: "plan.v1",
-  ARCH: "architecture.v1",
-  CODE: "code.v1",
-  REVIEW: "review.v1",
+  PLAN: "plan.v4",
+  ARCH: "architecture.v3",
+  CODE: "code.v4",
+  REVIEW: "review.v4",
   TEST: "test.v1",
   COMMIT: "commit.v1",
 } as const satisfies Readonly<Record<StageId, string>>;
 
 const PROMPT_FILES = {
-  PLAN: "plan.v1.md",
-  ARCH: "architecture.v1.md",
-  CODE: "code.v1.md",
-  REVIEW: "review.v1.md",
+  PLAN: "plan.v4.md",
+  ARCH: "architecture.v3.md",
+  CODE: "code.v4.md",
+  REVIEW: "review.v4.md",
   TEST: "test.v1.md",
   COMMIT: "commit.v1.md",
 } as const satisfies Readonly<Record<StageId, string>>;
@@ -25,13 +25,51 @@ const SCHEMAS: Readonly<Record<StageId, Readonly<Record<string, unknown>>>> = {
     steps: {
       type: "array",
       minItems: 1,
-      items: objectSchema(["id", "title", "description"], {
-        id: { type: "string" },
+      items: objectSchema(["title", "description"], {
         title: { type: "string" },
         description: { type: "string" },
       }),
     },
-    acceptanceCriteria: { type: "array", items: { type: "string" } },
+    acceptanceCriteria: {
+      type: "array",
+      items: objectSchema(["description", "requiredEvidence", "verifier"], {
+        description: { type: "string" },
+        requiredEvidence: {
+          type: "array",
+          minItems: 1,
+          uniqueItems: true,
+          items: { type: "string", enum: ["test", "review"] },
+        },
+        verifier: {
+          anyOf: [
+            objectSchema(["kind", "commandId"], {
+              kind: { const: "test-suite" },
+              commandId: { type: "string" },
+            }),
+            objectSchema(["kind", "commandId", "pattern"], {
+              kind: { const: "test-case" },
+              commandId: { type: "string" },
+              pattern: { type: "string" },
+            }),
+            objectSchema(["kind", "path", "assertion"], {
+              kind: { const: "file" },
+              path: { type: "string" },
+              assertion: { type: "string", enum: ["exists", "absent"] },
+            }),
+            objectSchema(["kind", "path", "assertion", "value"], {
+              kind: { const: "file" },
+              path: { type: "string" },
+              assertion: { const: "contains" },
+              value: { type: "string" },
+            }),
+            objectSchema(["kind", "rubric"], {
+              kind: { const: "review" },
+              rubric: { type: "string" },
+            }),
+          ],
+        },
+      }),
+    },
     summary: { type: "string" },
   }),
   ARCH: objectSchema(["decisions", "files", "risks", "alternatives", "summary"], {
@@ -53,39 +91,59 @@ const SCHEMAS: Readonly<Record<StageId, Readonly<Record<string, unknown>>>> = {
     },
     summary: { type: "string" },
   }),
-  CODE: objectSchema(["summary", "operations"], {
-    summary: { type: "string" },
-    operations: {
+  CODE: objectSchema(["basedOnEvidence", "todo", "actions"], {
+    basedOnEvidence: { type: "string" },
+    todo: { type: "array", items: { type: "string" } },
+    actions: {
       type: "array",
       minItems: 1,
-      maxItems: 30,
+      maxItems: 3,
       items: {
         anyOf: [
-          objectSchema(["tool", "args"], {
-            tool: { const: "write_file" },
-            args: objectSchema(["path", "content"], {
-              path: { type: "string" },
-              content: { type: "string" },
-            }),
+          objectSchema(["kind", "paths"], {
+            kind: { const: "inspect" },
+            paths: { type: "array", minItems: 1, maxItems: 8, items: { type: "string" } },
           }),
-          objectSchema(["tool", "args"], {
-            tool: { const: "edit_file" },
-            args: objectSchema(["path", "search", "replacement", "expectedOccurrences"], {
-              path: { type: "string" },
-              search: { type: "string" },
-              replacement: { type: "string" },
-              expectedOccurrences: { type: "integer", minimum: 1 },
-            }),
+          objectSchema(["kind", "queries"], {
+            kind: { const: "search" },
+            queries: { type: "array", minItems: 1, maxItems: 8, items: { type: "string" } },
+          }),
+          objectSchema(["kind", "path", "oldText", "newText"], {
+            kind: { const: "edit" },
+            path: { type: "string" },
+            oldText: { type: "string" },
+            newText: { type: "string" },
+          }),
+          objectSchema(["kind", "path", "content"], {
+            kind: { const: "write" },
+            path: { type: "string" },
+            content: { type: "string" },
+          }),
+          objectSchema(["kind", "checkId"], {
+            kind: { const: "fast-check" },
+            checkId: { type: "string" },
+          }),
+          objectSchema(["kind", "evidence"], {
+            kind: { const: "finish" },
+            evidence: { type: "string" },
           }),
         ],
       },
     },
   }),
-  REVIEW: objectSchema(["approved", "reason", "feedback", "evidence"], {
+  REVIEW: objectSchema(["approved", "reason", "feedback", "evidence", "acceptanceCriteria"], {
     approved: { type: "boolean" },
     reason: { type: "string" },
     feedback: { type: "string" },
     evidence: { type: "string" },
+    acceptanceCriteria: {
+      type: "array",
+      items: objectSchema(["criterionId", "satisfied", "evidence"], {
+        criterionId: { type: "string" },
+        satisfied: { type: "boolean" },
+        evidence: { type: "string" },
+      }),
+    },
   }),
   TEST: objectSchema([], {}),
   COMMIT: objectSchema([], {}),
@@ -102,14 +160,25 @@ export async function loadPrompt(
     template = await readFile(new URL(PROMPT_FILES[stage], import.meta.url), "utf8");
     cache.set(stage, template);
   }
-  return { content: interpolatePrompt(template, variables), version: PROMPT_VERSIONS[stage] };
+  const effectiveVariables =
+    stage === "CODE"
+      ? { maxSteps: "10", maxActions: "3", fastCheckIds: "none", ...variables }
+      : variables;
+  return {
+    content: interpolatePrompt(template, effectiveVariables),
+    version: PROMPT_VERSIONS[stage],
+  };
 }
 
 export function structuredOutputFor(stage: StageId): {
   readonly name: string;
   readonly jsonSchema: Readonly<Record<string, unknown>>;
 } {
-  return { name: `forgemind_${stage.toLocaleLowerCase()}_v1`, jsonSchema: SCHEMAS[stage] };
+  const version = PROMPT_VERSIONS[stage].split(".").at(-1);
+  return {
+    name: `forgemind_${stage.toLocaleLowerCase()}_${version}`,
+    jsonSchema: SCHEMAS[stage],
+  };
 }
 
 export function interpolatePrompt(

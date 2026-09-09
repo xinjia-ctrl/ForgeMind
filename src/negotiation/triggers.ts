@@ -61,14 +61,15 @@ export function detectArtifactMismatch(
 ): NegotiationEvidence | null {
   const ordered = [...artifacts].sort(
     (left, right) =>
-      left.artifact.path.localeCompare(right.artifact.path) ||
+      artifactConflictKey(left).localeCompare(artifactConflictKey(right)) ||
       left.taskId.localeCompare(right.taskId),
   );
   const byPath = new Map<string, NegotiationArtifact[]>();
   for (const artifact of ordered) {
-    const entries = byPath.get(artifact.artifact.path) ?? [];
+    const key = artifactConflictKey(artifact);
+    const entries = byPath.get(key) ?? [];
     entries.push(artifact);
-    byPath.set(artifact.artifact.path, entries);
+    byPath.set(key, entries);
   }
   for (const [path, entries] of byPath) {
     const tasks = new Set(entries.map((entry) => entry.taskId));
@@ -84,6 +85,10 @@ export function detectArtifactMismatch(
     };
   }
   return null;
+}
+
+function artifactConflictKey(entry: NegotiationArtifact): string {
+  return `${entry.repo}:${entry.artifact.path}`;
 }
 
 function describeAlternative(position: string, tradeoffs: readonly string[]): string {

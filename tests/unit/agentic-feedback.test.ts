@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import { HttpCiFeedbackClient } from "../../src/agentic/ci.js";
 import type { AgenticExecutionReceipt } from "../../src/agentic/dispatcher.js";
 import { AgenticFeedbackCoordinator } from "../../src/agentic/feedback.js";
+import type { ExternalAction, ExternalActionGovernor } from "../../src/agentic/external-action.js";
+import { ApprovalExternalActionGovernor } from "../../src/agentic/external-action.js";
 import { GitHubApiClient } from "../../src/agentic/github.js";
 import { JiraApiClient } from "../../src/agentic/jira.js";
 import type { AgenticRunRequest } from "../../src/agentic/types.js";
+import { EventLog } from "../../src/core/event-log.js";
+import { AutoApprovalGateway } from "../../src/policy/auto-gateway.js";
 
 describe("agentic feedback", () => {
   it("pushes a safe branch, creates a PR, and idempotently comments on GitHub", async () => {
@@ -53,7 +60,9 @@ describe("agentic feedback", () => {
           published.push(candidate.head);
           return Promise.resolve();
         },
+        verify: () => Promise.resolve(true),
       },
+      governor: allowGovernor(),
     });
     const currentRequest = request("github");
     const currentReceipt = receipt();
@@ -85,14 +94,18 @@ describe("agentic feedback", () => {
       readonly method: string;
       readonly body?: unknown;
     }> = [];
+    let jiraComment: unknown;
     const jiraFetcher: typeof fetch = (input, init) => {
       const url = requestUrl(input);
       const method = init?.method ?? "GET";
       const body = optionalParsedBody(init);
       jiraCalls.push({ url, method, ...(body === undefined ? {} : { body }) });
-      return Promise.resolve(
-        method === "GET" ? jsonResponse({ comments: [] }) : jsonResponse({ id: "10001" }, 201),
-      );
+      if (method === "GET")
+        return Promise.resolve(
+          jsonResponse({ comments: jiraComment === undefined ? [] : [jiraComment] }),
+        );
+      jiraComment = { id: "10001", body };
+      return Promise.resolve(jsonResponse({ id: "10001" }, 201));
     };
     const jira = new AgenticFeedbackCoordinator({
       jira: new JiraApiClient({
@@ -100,6 +113,7 @@ describe("agentic feedback", () => {
         authentication: { bearerToken: "token" },
         fetcher: jiraFetcher,
       }),
+      governor: allowGovernor(),
     });
     await jira.publish(request("jira"), { ...receipt(), pullRequests: [] });
     const jiraPost = jiraCalls.find((call) => call.method === "POST");
@@ -120,7 +134,7 @@ describe("agentic feedback", () => {
         return Promise.resolve(jsonResponse({ accepted: true }, 202));
       },
     });
-    const ci = new AgenticFeedbackCoordinator({ ci: ciClient });
+    const ci = new AgenticFeedbackCoordinator({ ci: ciClient, governor: allowGovernor() });
     await ci.publish(request("ci"), { ...receipt(), pullRequests: [] });
     const ciCall = ciCalls[0];
     assert.ok(ciCall);
@@ -139,7 +153,53 @@ describe("agentic feedback", () => {
       /test branch/,
     );
   });
+
+  it("approves, verifies, and audits external actions through the shared event contract", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-external-action-"));
+    try {
+      const eventLog = await EventLog.create(directory, "external-action-run");
+      const governor = new ApprovalExternalActionGovernor({
+        approvalGateway: new AutoApprovalGateway(),
+      });
+      const result = await governor.execute({
+        runId: "external-action-run",
+        eventLog,
+        tool: "external_push",
+        args: { head: "forgemind/run" },
+        target: "acme/api:forgemind/run",
+        idempotencyKey: "push-1",
+        risk: "high",
+        execute: () => Promise.resolve("commit-1"),
+        verify: (commit) => Promise.resolve(commit === "commit-1"),
+      });
+      assert.equal(result, "commit-1");
+      const events = await eventLog.load();
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["approval.requested", "approval.approved", "tool.called"],
+      );
+      const tool = events[2];
+      assert.equal(tool?.type, "tool.called");
+      assert.deepEqual(tool.data.result, {
+        ok: true,
+        verified: true,
+        target: "acme/api:forgemind/run",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
+
+function allowGovernor(): ExternalActionGovernor {
+  return {
+    async execute<T>(action: ExternalAction<T>): Promise<T> {
+      const result = await action.execute();
+      assert.equal(await action.verify(result), true);
+      return result;
+    },
+  };
+}
 
 function request(source: "github" | "jira" | "ci"): AgenticRunRequest {
   return {

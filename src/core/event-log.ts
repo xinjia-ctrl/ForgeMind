@@ -13,12 +13,13 @@ export interface EventLogIndex {
 export class EventLog {
   readonly #filePath: string;
   readonly #index: EventLogIndex;
-  #nextSeq = 1;
+  #nextSeq: number;
   #appendQueue: Promise<void> = Promise.resolve();
 
-  private constructor(filePath: string, index: EventLogIndex = {}) {
+  private constructor(filePath: string, index: EventLogIndex = {}, nextSeq = 1) {
     this.#filePath = filePath;
     this.#index = index;
+    this.#nextSeq = nextSeq;
   }
 
   public static async create(
@@ -42,9 +43,9 @@ export class EventLog {
     return new EventLog(filePath, index);
   }
 
-  public static open(directory: string, runId: string): EventLog {
+  public static open(directory: string, runId: string, index: EventLogIndex = {}): EventLog {
     assertValidRunId(runId);
-    return new EventLog(path.join(directory, `${runId}.jsonl`));
+    return new EventLog(path.join(directory, `${runId}.jsonl`), index, 0);
   }
 
   public get filePath(): string {
@@ -61,6 +62,10 @@ export class EventLog {
   }
 
   private async appendImmediately(input: EventInput): Promise<ForgeMindEvent> {
+    if (this.#nextSeq === 0) {
+      const existing = await readEvents(this.#filePath);
+      this.#nextSeq = (existing.at(-1)?.seq ?? 0) + 1;
+    }
     const data = {
       ...input.data,
       ...(this.#index.taskId === undefined ? {} : { taskId: this.#index.taskId }),
@@ -94,21 +99,25 @@ export class EventLog {
 
   public async load(): Promise<readonly ForgeMindEvent[]> {
     await this.#appendQueue;
-    let content: string;
-    try {
-      content = await readFile(this.#filePath, "utf8");
-    } catch (error) {
-      throw new FatalFailure(`Cannot read event log ${this.#filePath}`, {
-        cause: error,
-      });
-    }
-
-    if (content.trim().length === 0) return [];
-    return content
-      .trimEnd()
-      .split("\n")
-      .map((line, index) => parseEvent(line, index + 1));
+    return await readEvents(this.#filePath);
   }
+}
+
+async function readEvents(filePath: string): Promise<readonly ForgeMindEvent[]> {
+  let content: string;
+  try {
+    content = await readFile(filePath, "utf8");
+  } catch (error) {
+    throw new FatalFailure(`Cannot read event log ${filePath}`, {
+      cause: error,
+    });
+  }
+
+  if (content.trim().length === 0) return [];
+  return content
+    .trimEnd()
+    .split("\n")
+    .map((line, index) => parseEvent(line, index + 1));
 }
 
 export function assertValidRunId(runId: string): void {

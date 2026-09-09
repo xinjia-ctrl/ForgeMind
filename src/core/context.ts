@@ -1,5 +1,6 @@
 import type {
   ArchDecision,
+  AcceptanceCriterion,
   ArtifactRef,
   GateResult,
   StageId,
@@ -11,6 +12,9 @@ import type {
 interface InitialContextOptions {
   readonly runId: string;
   readonly requirement: string;
+  readonly requirementTrust?: "trusted" | "untrusted";
+  readonly requiredAcceptanceCriteria?: readonly AcceptanceCriterion[];
+  readonly upstreamHandoffs?: TaskContext["upstreamHandoffs"];
   readonly repoPath: string;
   readonly branch: string;
   readonly tokenBudget: TokenBudgets;
@@ -20,6 +24,13 @@ export function createTaskContext(options: InitialContextOptions): TaskContext {
   return freezeContext({
     runId: options.runId,
     requirement: options.requirement,
+    requirementTrust: options.requirementTrust ?? "trusted",
+    ...(options.requiredAcceptanceCriteria === undefined
+      ? {}
+      : { requiredAcceptanceCriteria: [...options.requiredAcceptanceCriteria] }),
+    ...(options.upstreamHandoffs === undefined
+      ? {}
+      : { upstreamHandoffs: [...options.upstreamHandoffs] }),
     repo: { path: options.repoPath, branch: options.branch },
     plan: null,
     architecture: null,
@@ -66,6 +77,17 @@ export function withUpdatedArchitecture(ctx: TaskContext, architecture: ArchDeci
     artifacts: ctx.artifacts.map((artifact) =>
       artifact.stage === "ARCH" ? { ...artifact, summary: architecture.summary } : artifact,
     ),
+  });
+}
+
+export function withAcceptanceCriteria(
+  ctx: TaskContext,
+  acceptanceCriteria: readonly AcceptanceCriterion[],
+): TaskContext {
+  if (ctx.plan === null) throw new Error("Cannot update acceptance criteria without a plan");
+  return freezeContext({
+    ...ctx,
+    plan: { ...ctx.plan, acceptanceCriteria: [...acceptanceCriteria] },
   });
 }
 

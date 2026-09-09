@@ -10,6 +10,7 @@ import {
   ForgeMindAgenticRunDispatcher,
 } from "../../src/agentic/dispatcher.js";
 import { AgenticFeedbackCoordinator } from "../../src/agentic/feedback.js";
+import type { ExternalAction, ExternalActionGovernor } from "../../src/agentic/external-action.js";
 import { GitHubApiClient } from "../../src/agentic/github.js";
 import { FileAgenticStateStore } from "../../src/agentic/state.js";
 import { AgenticTriggerEngine } from "../../src/agentic/trigger.js";
@@ -71,7 +72,11 @@ it("runs the signed webhook to PR/comment loop exactly once", async () => {
       ],
       feedback: new AgenticFeedbackCoordinator({
         github,
-        branchPublisher: { publish: () => Promise.resolve() },
+        branchPublisher: {
+          publish: () => Promise.resolve(),
+          verify: () => Promise.resolve(true),
+        },
+        governor: allowGovernor(),
       }),
       run(options) {
         runs += 1;
@@ -118,6 +123,14 @@ it("runs the signed webhook to PR/comment loop exactly once", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+function allowGovernor(): ExternalActionGovernor {
+  return {
+    async execute<T>(action: ExternalAction<T>): Promise<T> {
+      return await action.execute();
+    },
+  };
+}
 
 function execution(options: RunOptions): RunExecution {
   const runId = options.runId ?? "missing";

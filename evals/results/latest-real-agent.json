@@ -1,0 +1,196 @@
+{
+  "kind": "real-agent-evaluation",
+  "model": "deepseek-v4-flash",
+  "generatedAt": "2026-09-02T13:15:25.276Z",
+  "passed": 5,
+  "total": 5,
+  "passRate": 1,
+  "scenarios": [
+    {
+      "name": "single-file-defect-fix",
+      "passed": true,
+      "status": "SUCCEEDED",
+      "semanticFailures": [],
+      "acceptanceEvidenceComplete": true,
+      "modelCalls": 4,
+      "reworkRounds": 0,
+      "negotiations": 0,
+      "crashRecoveries": 0,
+      "toolFailures": 0,
+      "unauthorizedToolCalls": 0,
+      "inputTokens": 3869,
+      "outputTokens": 587,
+      "estimatedCostUsd": null,
+      "finalAcceptanceEvidence": [
+        {
+          "criterionId": "AC-1",
+          "verifierKind": "behavior",
+          "source": "test:behavior:signed-sum-probe",
+          "artifactFingerprint": "370116d8dceda9fb103a9cd0204f89426c5ee2beb1247d74c2227b418e0ba944",
+          "passed": true,
+          "details": "command=/usr/local/bin/node --input-type=module -e import('./src/sum.js').then(({sum})=>{if(sum(2,3)!==5||sum(-2,1)!==-1)process.exit(9)}); ok=true; output=<empty>; outputMatched=true"
+        },
+        {
+          "criterionId": "AC-2",
+          "verifierKind": "test-suite",
+          "source": "test:command:primary",
+          "artifactFingerprint": "370116d8dceda9fb103a9cd0204f89426c5ee2beb1247d74c2227b418e0ba944",
+          "passed": true,
+          "details": "command=node --test; ok=true; output=✔ signed sums (0.313334ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 36.652791"
+        }
+      ]
+    },
+    {
+      "name": "cross-file-feature-change",
+      "passed": true,
+      "status": "SUCCEEDED",
+      "semanticFailures": [],
+      "acceptanceEvidenceComplete": true,
+      "modelCalls": 5,
+      "reworkRounds": 0,
+      "negotiations": 0,
+      "crashRecoveries": 0,
+      "toolFailures": 0,
+      "unauthorizedToolCalls": 0,
+      "inputTokens": 5265,
+      "outputTokens": 741,
+      "estimatedCostUsd": null,
+      "finalAcceptanceEvidence": [
+        {
+          "criterionId": "AC-1",
+          "verifierKind": "behavior",
+          "source": "test:behavior:greeting-probe",
+          "artifactFingerprint": "18416f879f70f67e237bc357b55abdf9ddeb411c9770f53a043f840d06bf67ac",
+          "passed": true,
+          "details": "command=/usr/local/bin/node --input-type=module -e Promise.all([import('./src/constants.js'),import('./src/greet.js')]).then(([{GREETING},{greet}])=>{if(GREETING!=='hello'||greet('Ada')!=='hello, Ada!')process.exit(9)}); ok=true; output=<empty>; outputMatched=true"
+        },
+        {
+          "criterionId": "AC-2",
+          "verifierKind": "test-suite",
+          "source": "test:command:primary",
+          "artifactFingerprint": "18416f879f70f67e237bc357b55abdf9ddeb411c9770f53a043f840d06bf67ac",
+          "passed": true,
+          "details": "command=node --test; ok=true; output=✔ personalized greeting (0.333084ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 36.840875"
+        }
+      ]
+    },
+    {
+      "name": "test-failure-auto-rework",
+      "passed": true,
+      "status": "SUCCEEDED",
+      "semanticFailures": [],
+      "acceptanceEvidenceComplete": true,
+      "modelCalls": 7,
+      "reworkRounds": 1,
+      "negotiations": 0,
+      "crashRecoveries": 0,
+      "toolFailures": 5,
+      "unauthorizedToolCalls": 0,
+      "inputTokens": 8265,
+      "outputTokens": 1273,
+      "estimatedCostUsd": null,
+      "finalAcceptanceEvidence": [
+        {
+          "criterionId": "AC-1",
+          "verifierKind": "behavior",
+          "source": "test:behavior:rework-probe",
+          "artifactFingerprint": "d7677dd457287352d5f9aa29b28afefcd20f87ba6f3bc5819627b2f17c425a03",
+          "passed": true,
+          "details": "command=/usr/local/bin/node --input-type=module -e import('./src/sum.js').then(({sum})=>{if(sum(2,3)!==5||sum(-2,1)!==-1)process.exit(9)}); ok=true; output=<empty>; outputMatched=true"
+        },
+        {
+          "criterionId": "AC-2",
+          "verifierKind": "test-suite",
+          "source": "test:command:primary",
+          "artifactFingerprint": "d7677dd457287352d5f9aa29b28afefcd20f87ba6f3bc5819627b2f17c425a03",
+          "passed": true,
+          "details": "command=node --test; ok=true; output=✔ sum adds two positive numbers (0.29625ms)\n✔ sum handles negative numbers (0.039292ms)\n✔ sum handles zero (0.035167ms)\nℹ tests 3\nℹ suites 0\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 37.307083"
+        }
+      ]
+    },
+    {
+      "name": "crash-recovery",
+      "passed": true,
+      "status": "SUCCEEDED",
+      "semanticFailures": [],
+      "acceptanceEvidenceComplete": true,
+      "modelCalls": 5,
+      "reworkRounds": 0,
+      "negotiations": 0,
+      "crashRecoveries": 1,
+      "toolFailures": 0,
+      "unauthorizedToolCalls": 0,
+      "inputTokens": 4910,
+      "outputTokens": 665,
+      "estimatedCostUsd": null,
+      "finalAcceptanceEvidence": [
+        {
+          "criterionId": "AC-1",
+          "verifierKind": "file",
+          "source": "test:file:contains",
+          "artifactFingerprint": "a17ba68c920fe5dbb37e7351f4be5101d21baee91ee4222e9a5eb187847a0881",
+          "passed": true,
+          "details": "src/version.js contains \"2\"=true"
+        },
+        {
+          "criterionId": "AC-2",
+          "verifierKind": "test-suite",
+          "source": "test:command:primary",
+          "artifactFingerprint": "a17ba68c920fe5dbb37e7351f4be5101d21baee91ee4222e9a5eb187847a0881",
+          "passed": true,
+          "details": "command=node --test; ok=true; output=✔ version (0.251667ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 38.296208"
+        }
+      ]
+    },
+    {
+      "name": "conflict-resolution",
+      "passed": true,
+      "status": "SUCCEEDED",
+      "semanticFailures": [],
+      "acceptanceEvidenceComplete": true,
+      "modelCalls": 14,
+      "reworkRounds": 0,
+      "negotiations": 1,
+      "crashRecoveries": 0,
+      "toolFailures": 4,
+      "unauthorizedToolCalls": 0,
+      "inputTokens": 17698,
+      "outputTokens": 2420,
+      "estimatedCostUsd": null,
+      "finalAcceptanceEvidence": [
+        {
+          "criterionId": "AC-1",
+          "verifierKind": "behavior",
+          "source": "test:behavior:divide-probe",
+          "artifactFingerprint": "d5c987a167f74d4fe0a8953a434ef23124ae3ec8f486310f98faaf4955f85932",
+          "passed": true,
+          "details": "command=/usr/local/bin/node --input-type=module -e import('./src/divide.js').then(({safeDivide})=>{if(safeDivide(6,3)!==2)process.exit(9);try{const value=safeDivide(1,0);if(value!==null)process.exit(10)}catch{}}); ok=true; output=<empty>; outputMatched=true"
+        },
+        {
+          "criterionId": "AC-2",
+          "verifierKind": "test-suite",
+          "source": "test:command:primary",
+          "artifactFingerprint": "d5c987a167f74d4fe0a8953a434ef23124ae3ec8f486310f98faaf4955f85932",
+          "passed": true,
+          "details": "command=node --test; ok=true; output=✔ safeDivide(6, 3) returns 2 (0.315625ms)\n✔ safeDivide(1, 0) returns null (0.049875ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 36.245208"
+        },
+        {
+          "criterionId": "AC-3",
+          "verifierKind": "test-suite",
+          "source": "test:command:primary",
+          "artifactFingerprint": "d5c987a167f74d4fe0a8953a434ef23124ae3ec8f486310f98faaf4955f85932",
+          "passed": true,
+          "details": "command=node --test; ok=true; output=✔ safeDivide(6, 3) returns 2 (0.315625ms)\n✔ safeDivide(1, 0) returns null (0.049875ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 36.245208"
+        },
+        {
+          "criterionId": "AC-4",
+          "verifierKind": "test-case",
+          "source": "test:case:primary",
+          "artifactFingerprint": "d5c987a167f74d4fe0a8953a434ef23124ae3ec8f486310f98faaf4955f85932",
+          "passed": true,
+          "details": "command=node --test; ok=true; output=✔ safeDivide(6, 3) returns 2 (0.315625ms)\n✔ safeDivide(1, 0) returns null (0.049875ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 36.245208; pattern=\"safeDivide(1, 0) returns null\"; matched=true"
+        }
+      ]
+    }
+  ]
+}

@@ -1,8 +1,9 @@
 import path from "node:path";
-import { HardFailure } from "../core/errors.js";
+import { HardFailure, throwIfCancelled } from "../core/errors.js";
 import type { ArtifactRef, TaskContext } from "../core/types.js";
 import type { MemoryProvider, RecallOptions, Retrieval } from "./memory-provider.js";
 import {
+  isProjectMemoryEntryActive,
   PROJECT_MEMORY_FILES,
   type ProjectMemoryEntry,
   type ProjectMemoryFile,
@@ -18,7 +19,7 @@ const VECTOR_ONLY_THRESHOLD = 0.2;
 
 export interface EmbeddingProvider {
   readonly dimension: number;
-  embed(text: string): Promise<readonly number[]>;
+  embed(text: string, signal?: AbortSignal): Promise<readonly number[]>;
 }
 
 export interface LexicalEmbeddingProviderOptions {
@@ -94,6 +95,7 @@ export class SemanticMemory implements MemoryProvider {
   }
 
   public async recall(query: string, options: RecallOptions = {}): Promise<readonly Retrieval[]> {
+    throwIfCancelled(options.signal);
     if (options.scopes !== undefined && !options.scopes.includes("semantic")) return [];
     const queryTerms = semanticTerms(query);
     if (queryTerms.length === 0) return [];
@@ -112,13 +114,14 @@ export class SemanticMemory implements MemoryProvider {
     const documentFrequency = frequencies(uniqueQueryTerms, documentTerms);
     const averageDocumentLength =
       documentTerms.reduce((total, terms) => total + terms.length, 0) / documents.length;
-    const queryVector = await this.embedQuery(query);
+    const queryVector = await this.embedQuery(query, options.signal);
     const documentVectors = await mapConcurrent(
       documents,
       EMBEDDING_CONCURRENCY,
-      async (document) => await this.embed(document.searchText, document.cacheKey),
+      async (document) => await this.embed(document.searchText, document.cacheKey, options.signal),
     );
     const lexicalOnly = this.#embeddingProvider instanceof LexicalEmbeddingProvider;
+    throwIfCancelled(options.signal);
 
     return documents
       .map((document, index): Retrieval | null => {
@@ -138,8 +141,11 @@ export class SemanticMemory implements MemoryProvider {
         const score = roundScore(lexicalScore * 0.6 + cosine * 0.4);
         const matches = uniqueQueryTerms.filter((term) => terms.includes(term));
         return {
+          entryId: document.entry.id,
           content: document.entry.content,
           source: document.source,
+          timestamp: document.entry.updatedAt,
+          confidence: document.entry.confidence,
           score,
           scope: "semantic",
           reason: `BM25=${roundScore(bm25)}; cosine=${roundScore(cosine)}; terms=${matches.join(", ") || "vector-only"}`,
@@ -172,9 +178,11 @@ export class SemanticMemory implements MemoryProvider {
     );
     const documents = sources
       .flatMap(({ document, file, repositoryRoot, rootIndex }) =>
-        document.entries.map((entry) =>
-          semanticDocument(entry, file, repositoryRoot, rootIndex, roots.length),
-        ),
+        document.entries
+          .filter(
+            (entry) => isProjectMemoryEntryActive(entry) && entry.permissions.read === "project",
+          )
+          .map((entry) => semanticDocument(entry, file, repositoryRoot, rootIndex, roots.length)),
       )
       .sort((left, right) => left.cacheKey.localeCompare(right.cacheKey));
     if (documents.length > this.#maxDocuments) {
@@ -185,17 +193,27 @@ export class SemanticMemory implements MemoryProvider {
     return documents;
   }
 
-  private async embed(text: string, cacheKey: string): Promise<readonly number[]> {
+  private async embed(
+    text: string,
+    cacheKey: string,
+    signal?: AbortSignal,
+  ): Promise<readonly number[]> {
     const cached = this.#embeddingCache.get(cacheKey);
     if (cached !== undefined) return cached;
-    const embedded = await this.#embeddingProvider.embed(text.slice(0, MAX_INDEXED_TEXT_LENGTH));
+    const embedded = await this.#embeddingProvider.embed(
+      text.slice(0, MAX_INDEXED_TEXT_LENGTH),
+      signal,
+    );
     const vector = validateVector(embedded, this.#dimension, cacheKey);
     this.#embeddingCache.set(cacheKey, vector);
     return vector;
   }
 
-  private async embedQuery(query: string): Promise<readonly number[]> {
-    const embedded = await this.#embeddingProvider.embed(query.slice(0, MAX_INDEXED_TEXT_LENGTH));
+  private async embedQuery(query: string, signal?: AbortSignal): Promise<readonly number[]> {
+    const embedded = await this.#embeddingProvider.embed(
+      query.slice(0, MAX_INDEXED_TEXT_LENGTH),
+      signal,
+    );
     return validateVector(embedded, this.#dimension, "query");
   }
 

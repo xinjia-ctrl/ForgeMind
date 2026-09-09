@@ -9,11 +9,15 @@ export interface RecallOptions {
   readonly scopes?: readonly MemoryScope[];
   readonly statuses?: readonly RunStatus[];
   readonly limit?: number;
+  readonly signal?: AbortSignal;
 }
 
 export interface Retrieval {
+  readonly entryId: string;
   readonly content: string;
   readonly source: string;
+  readonly timestamp: string;
+  readonly confidence: number;
   readonly score: number;
   readonly scope: MemoryScope;
   readonly reason: string;

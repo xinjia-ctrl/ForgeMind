@@ -18,7 +18,7 @@ export interface AgenticDispatchReceipt {
 }
 
 export interface AgenticRunDispatcher {
-  dispatch(request: AgenticRunRequest): Promise<AgenticDispatchReceipt>;
+  dispatch(request: AgenticRunRequest, signal?: AbortSignal): Promise<AgenticDispatchReceipt>;
 }
 
 export interface AgenticAuditSink {
@@ -66,10 +66,10 @@ export class AgenticWatchService {
     }
   }
 
-  public async accept(event: DevelopmentEvent): Promise<AgenticWatchOutcome> {
+  public async accept(event: DevelopmentEvent, signal?: AbortSignal): Promise<AgenticWatchOutcome> {
     await this.restore();
     await this.#audit.received(event);
-    return await this.applyDecision(this.#trigger.ingest(event));
+    return await this.applyDecision(this.#trigger.ingest(event), signal);
   }
 
   public async restore(): Promise<void> {
@@ -77,8 +77,8 @@ export class AgenticWatchService {
     await this.#initialization;
   }
 
-  public async pollOnce(): Promise<readonly AgenticWatchOutcome[]> {
-    const operation = this.#pollQueue.then(() => this.pollImmediately());
+  public async pollOnce(signal?: AbortSignal): Promise<readonly AgenticWatchOutcome[]> {
+    const operation = this.#pollQueue.then(() => this.pollImmediately(signal));
     this.#pollQueue = operation.then(
       (outcomes) => outcomes,
       () => [],
@@ -91,7 +91,7 @@ export class AgenticWatchService {
       throw new Error("pollIntervalMs must be an integer of at least 1000ms");
     }
     while (!signal.aborted) {
-      await this.pollOnce();
+      await this.pollOnce(signal);
       await waitForNextPoll(signal, pollIntervalMs);
     }
   }
@@ -104,13 +104,13 @@ export class AgenticWatchService {
     return this.#dispatchRetries.size;
   }
 
-  private async pollImmediately(): Promise<readonly AgenticWatchOutcome[]> {
+  private async pollImmediately(signal?: AbortSignal): Promise<readonly AgenticWatchOutcome[]> {
     await this.restore();
-    const outcomes: AgenticWatchOutcome[] = [...(await this.retryQueuedDispatches())];
+    const outcomes: AgenticWatchOutcome[] = [...(await this.retryQueuedDispatches(signal))];
     for (const poller of this.#pollers) {
       const cursor = this.#cursors.get(poller.id);
       const result = await poller.poll(cursor);
-      for (const event of result.events) outcomes.push(await this.accept(event));
+      for (const event of result.events) outcomes.push(await this.accept(event, signal));
       if (result.cursor !== undefined) {
         this.#cursors.set(poller.id, result.cursor);
         await this.persistState();
@@ -122,12 +122,15 @@ export class AgenticWatchService {
     }
     if (ready.length > 0) await this.persistState();
     for (const decision of ready) {
-      outcomes.push(await this.applyDecision(decision));
+      outcomes.push(await this.applyDecision(decision, signal));
     }
     return outcomes;
   }
 
-  private async applyDecision(decision: TriggerDecision): Promise<AgenticWatchOutcome> {
+  private async applyDecision(
+    decision: TriggerDecision,
+    signal?: AbortSignal,
+  ): Promise<AgenticWatchOutcome> {
     await this.#audit.decided(decision);
     if (decision.kind !== "TRIGGER") {
       await this.persistState();
@@ -135,18 +138,20 @@ export class AgenticWatchService {
     }
     this.#dispatchRetries.set(decision.request.id, decision);
     await this.persistState();
-    const dispatch = await this.#dispatcher.dispatch(decision.request);
+    const dispatch = await this.#dispatcher.dispatch(decision.request, signal);
     this.#dispatchRetries.delete(decision.request.id);
     await this.persistState();
     return { decision, dispatch };
   }
 
-  private async retryQueuedDispatches(): Promise<readonly AgenticWatchOutcome[]> {
+  private async retryQueuedDispatches(
+    signal?: AbortSignal,
+  ): Promise<readonly AgenticWatchOutcome[]> {
     const outcomes: AgenticWatchOutcome[] = [];
     for (const decision of [...this.#dispatchRetries.values()].sort((left, right) =>
       left.request.id.localeCompare(right.request.id),
     )) {
-      const dispatch = await this.#dispatcher.dispatch(decision.request);
+      const dispatch = await this.#dispatcher.dispatch(decision.request, signal);
       this.#dispatchRetries.delete(decision.request.id);
       await this.persistState();
       outcomes.push({ decision, dispatch });

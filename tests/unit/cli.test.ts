@@ -39,6 +39,13 @@ describe("CLI validation", () => {
     );
   });
 
+  it("requires an explicit run id for resume before reading credentials", async () => {
+    assert.equal(
+      await withMutedStderr(() => main(["run", "--repo", ".", "--requirement", "x", "--resume"])),
+      1,
+    );
+  });
+
   it("parses and validates the nested dag run command before reading credentials", async () => {
     assert.equal(
       await withMutedStderr(() =>
@@ -82,6 +89,14 @@ describe("CLI validation", () => {
       await withMutedStderr(() =>
         main(["run", "--repo", ".", "--requirement", "x", "--actor", "alice"]),
       ),
+      1,
+    );
+  });
+
+  it("validates the local web port before starting a server", async () => {
+    assert.equal(await withMutedStderr(() => main(["web", "--port", "0"])), 1);
+    assert.equal(
+      await withMutedStderr(() => main(["web", "--port", "3210", "--public", "true"])),
       1,
     );
   });

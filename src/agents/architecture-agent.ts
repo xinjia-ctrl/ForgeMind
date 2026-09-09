@@ -9,23 +9,41 @@ import type {
 import type { BaseAgentOptions } from "./base-agent.js";
 import { BaseAgent } from "./base-agent.js";
 import { objectArray, requiredString, stringArray } from "./validation.js";
+import { renderAcceptanceContract } from "../core/acceptance.js";
+import type { RunArtifactStore } from "../core/run-artifact-store.js";
 
-export const ARCH_TOOLS = ["write_file"] as const;
+export const ARCH_TOOLS = [] as const;
 
 export class ArchitectureAgent extends BaseAgent {
-  public constructor(options: Omit<BaseAgentOptions, "id" | "tools">) {
+  readonly #artifactStore: RunArtifactStore;
+
+  public constructor(
+    options: Omit<BaseAgentOptions, "id" | "tools"> & { readonly artifactStore: RunArtifactStore },
+  ) {
     super({ ...options, id: "ARCH", tools: ARCH_TOOLS });
+    this.#artifactStore = options.artifactStore;
   }
 
   protected async execute(_input: StageInput, ctx: TaskContext): Promise<StageOutput> {
     if (ctx.plan === null) throw new StageFailure("ARCH requires a completed plan");
     const response = await this.completeJson(ctx, [
-      { name: "Requirement", content: ctx.requirement, source: "contract" },
-      { name: "Plan summary", content: ctx.plan.summary, source: "contract" },
+      {
+        name: "Requirement",
+        content: ctx.requirement,
+        source: "contract",
+        trust: ctx.requirementTrust ?? "trusted",
+      },
+      {
+        name: "Plan summary",
+        content: ctx.plan.summary,
+        source: "contract",
+        trust: "untrusted",
+      },
       {
         name: "Acceptance criteria",
-        content: ctx.plan.acceptanceCriteria.join("; "),
+        content: renderAcceptanceContract(ctx.plan.acceptanceCriteria),
         source: "contract",
+        trust: "untrusted",
       },
     ]);
     const architecture: ArchDecision = {
@@ -45,16 +63,16 @@ export class ArchitectureAgent extends BaseAgent {
           }),
       summary: requiredString(response, "summary"),
     };
+    const artifactPath = await this.#artifactStore.write(
+      "architecture.md",
+      renderArchitecture(architecture),
+    );
     const artifact: ArtifactRef = {
-      path: `docs/.forgemind/${ctx.runId}/architecture.md`,
+      path: artifactPath,
       kind: "architecture",
       stage: "ARCH",
       summary: architecture.summary,
     };
-    await this.requireTool("write_file", {
-      path: artifact.path,
-      content: renderArchitecture(architecture),
-    });
     return { kind: "architecture", architecture, artifact };
   }
 }

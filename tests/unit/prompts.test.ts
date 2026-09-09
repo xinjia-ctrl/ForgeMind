@@ -6,8 +6,12 @@ import { interpolatePrompt, loadPrompt, structuredOutputFor } from "../../src/pr
 
 describe("prompt governance", () => {
   it("loads versioned five-section prompt resources and interpolates bounded variables", async () => {
-    const prompt = await loadPrompt("CODE", { maxOperations: "30" });
-    assert.equal(prompt.version, "code.v1");
+    const prompt = await loadPrompt("CODE", {
+      maxSteps: "10",
+      maxActions: "3",
+      fastCheckIds: "primary",
+    });
+    assert.equal(prompt.version, "code.v4");
     for (const heading of [
       "角色与职责",
       "输入契约摘要",
@@ -18,14 +22,30 @@ describe("prompt governance", () => {
       assert.match(prompt.content, new RegExp(heading));
     }
     assert.doesNotMatch(prompt.content, /{{/);
+    assert.match(prompt.content, /"kind":"write"/);
     assert.throws(() => interpolatePrompt("Hello {{name}}", {}), /Unresolved/);
+    const architecturePrompt = await loadPrompt("ARCH");
+    assert.equal(architecturePrompt.version, "architecture.v3");
+    assert.match(architecturePrompt.content, /arrays of JSON strings, never arrays of objects/);
+    const reviewPrompt = await loadPrompt("REVIEW");
+    assert.equal(reviewPrompt.version, "review.v4");
+    assert.match(reviewPrompt.content, /explicitly assigned to REVIEW/);
   });
 
-  it("exposes strict schemas and honors the structured-output kill switch", () => {
-    assert.equal(structuredOutputFor("PLAN").name, "forgemind_plan_v1");
-    const provider = new FakeChatProvider([], { supportsStructuredOutput: true });
-    assert.equal(supportsStructuredOutput(provider, {}), true);
-    assert.equal(supportsStructuredOutput(provider, { FORGEMIND_STRUCTURED_OUTPUT: "0" }), false);
+  it("exposes strict schemas and honors the provider capability", () => {
+    const planOutput = structuredOutputFor("PLAN");
+    assert.equal(planOutput.name, "forgemind_plan_v4");
+    const planSchema = planOutput.jsonSchema as {
+      properties: {
+        steps: { items: { properties: Record<string, unknown>; required: string[] } };
+      };
+    };
+    assert.deepEqual(planSchema.properties.steps.items.required, ["title", "description"]);
+    assert.equal("id" in planSchema.properties.steps.items.properties, false);
+    const supported = new FakeChatProvider([], { supportsStructuredOutput: true });
+    const disabled = new FakeChatProvider([], { supportsStructuredOutput: false });
+    assert.equal(supportsStructuredOutput(supported), true);
+    assert.equal(supportsStructuredOutput(disabled), false);
     const architectureSchema = structuredOutputFor("ARCH").jsonSchema as {
       properties: Record<string, unknown>;
       required: string[];

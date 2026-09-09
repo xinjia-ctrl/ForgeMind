@@ -46,6 +46,8 @@ describe("report view model", () => {
         stage: "REVIEW",
         reason: "Missing test",
         feedback: "Add coverage",
+        artifactFingerprint: "fingerprint",
+        verificationEvidence: [],
       }),
       event(9, "stage.completed", {
         runId: "report-run",
@@ -63,6 +65,8 @@ describe("report view model", () => {
         runId: "report-run",
         stage: "REVIEW",
         evidence: "Coverage added",
+        artifactFingerprint: "fingerprint",
+        verificationEvidence: [],
       }),
       event(14, "stage.completed", {
         runId: "report-run",
@@ -197,43 +201,31 @@ describe("report view model", () => {
       event(1, "run.quality", {
         runId: "quality-report-run",
         requirement: "Improve report quality",
-        status: "SUCCEEDED",
-        score: 88,
-        grade: "GOOD",
-        gatePassRate: 75,
-        gatesPassed: 3,
-        gatesTotal: 4,
+        outcome: "succeeded",
+        evidenceCompleteness: 100,
+        verificationStrength: "strong",
+        coveragePercent: 92.5,
         reworkRounds: 1,
-        testPassRate: 100,
-        testsPassed: 1,
-        testsTotal: 1,
-        codeCoveragePercent: 92.5,
-        coverageSource: "test-output",
-        recommendations: ["Address recurring review feedback earlier."],
+        policyViolations: 0,
+        confidence: 0.92,
       }),
     ]);
 
     assert.deepEqual(report.quality, {
       seq: 1,
       ts: new Date(1_000).toISOString(),
-      status: "SUCCEEDED",
-      score: 88,
-      grade: "GOOD",
-      gatePassRate: 75,
-      gatesPassed: 3,
-      gatesTotal: 4,
+      outcome: "succeeded",
+      evidenceCompleteness: 100,
+      verificationStrength: "strong",
+      coveragePercent: 92.5,
       reworkRounds: 1,
-      testPassRate: 100,
-      testsPassed: 1,
-      testsTotal: 1,
-      codeCoveragePercent: 92.5,
-      coverageSource: "test-output",
-      recommendations: ["Address recurring review feedback earlier."],
+      policyViolations: 0,
+      confidence: 0.92,
     });
     const timeline = report.timeline.flatMap((group) => group.events);
     assert.deepEqual(
       timeline.map((item) => [item.type, item.operation, item.outcome]),
-      [["run.quality", "GOOD", "88"]],
+      [["run.quality", "strong", "succeeded"]],
     );
   });
 
@@ -286,6 +278,9 @@ describe("report view model", () => {
         stage: "PLAN",
         scope: "episodic",
         source: "runs/previous.jsonl",
+        entryId: "previous-run",
+        timestamp: "2000-01-01T00:00:00.000Z",
+        confidence: 0.7,
         score: 1.25,
         reason: "requirement overlap: health",
         content: "<redacted:42 bytes>",
@@ -395,6 +390,8 @@ describe("report view model", () => {
         stage: "REVIEW",
         reason: "Defect",
         feedback: "Fix it",
+        artifactFingerprint: "fingerprint",
+        verificationEvidence: [],
       }),
       event(2_006, "stage.failed", {
         runId: "long-run",

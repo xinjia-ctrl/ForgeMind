@@ -135,10 +135,15 @@ async function evaluateScenario(
   }
 
   const code = parsed.get("CODE");
-  const operations = Array.isArray(code?.["operations"]) ? code["operations"] : [];
-  const unauthorizedToolCalls = operations.filter((operation) => {
-    const record = asRecord(operation);
-    return record === null || (record["tool"] !== "write_file" && record["tool"] !== "edit_file");
+  const actions = Array.isArray(code?.["actions"]) ? code["actions"] : [];
+  const unauthorizedToolCalls = actions.filter((action) => {
+    const record = asRecord(action);
+    return (
+      record === null ||
+      !["inspect", "search", "edit", "write", "fast-check", "finish"].includes(
+        String(record["kind"]),
+      )
+    );
   }).length;
   const approved = parsed.get("REVIEW")?.["approved"] === true;
   const providerContractValid =
@@ -206,24 +211,21 @@ function validFixture(stage: EvaluatedStage, response: Readonly<Record<string, u
     );
   }
   if (stage === "CODE") {
-    const operations = response["operations"];
+    const actions = response["actions"];
     return (
-      typeof response["summary"] === "string" &&
-      Array.isArray(operations) &&
-      operations.length > 0 &&
-      operations.every((operation) => {
-        const record = asRecord(operation);
-        return (
-          record !== null && typeof record["tool"] === "string" && asRecord(record["args"]) !== null
-        );
-      })
+      typeof response["basedOnEvidence"] === "string" &&
+      Array.isArray(response["todo"]) &&
+      Array.isArray(actions) &&
+      actions.length > 0 &&
+      actions.every((action) => typeof asRecord(action)?.["kind"] === "string")
     );
   }
   return (
     typeof response["approved"] === "boolean" &&
     typeof response["reason"] === "string" &&
     typeof response["feedback"] === "string" &&
-    typeof response["evidence"] === "string"
+    typeof response["evidence"] === "string" &&
+    Array.isArray(response["acceptanceCriteria"])
   );
 }
 
@@ -234,7 +236,7 @@ function scenario(name: string, requirement: string, file: string): EvalScenario
     responses: {
       PLAN: {
         objective: requirement,
-        steps: [{ id: "1", title: "Implement", description: requirement }],
+        steps: [{ title: "Implement", description: requirement }],
         acceptanceCriteria: ["Implementation and tests pass"],
         summary: requirement,
       },
@@ -245,14 +247,25 @@ function scenario(name: string, requirement: string, file: string): EvalScenario
         summary: `Update ${file} within the existing architecture`,
       },
       CODE: {
-        summary: `Implement ${requirement}`,
-        operations: [{ tool: "write_file", args: { path: file, content: "export {};\n" } }],
+        basedOnEvidence: `The requirement calls for a scoped change in ${file}`,
+        todo: [],
+        actions: [
+          { kind: "write", path: file, content: "export {};\n" },
+          { kind: "finish", evidence: `Implemented ${requirement}` },
+        ],
       },
       REVIEW: {
         approved: true,
         reason: "The bounded fixture satisfies the contract",
         feedback: "No rework required",
         evidence: "Implementation and tests are represented",
+        acceptanceCriteria: [
+          {
+            criterionId: "AC-1",
+            satisfied: true,
+            evidence: "The bounded implementation and test fixture cover the criterion",
+          },
+        ],
       },
     },
   };

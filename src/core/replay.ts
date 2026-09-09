@@ -64,6 +64,8 @@ function describe(event: ForgeMindEvent): string {
       return `Negotiation ${event.data.reason}: ${event.data.approved ? "approved" : "denied"}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
+    case "run.resumed":
+      return `Run resumed at ${event.data.phase} attempt ${event.data.attempt}`;
     case "task.started":
       return `Task ${event.data.taskId} started as ${event.data.childRunId}`;
     case "task.completed":
@@ -101,7 +103,7 @@ function describe(event: ForgeMindEvent): string {
     case "run.finished":
       return `${event.data.status}: ${event.data.summary}`;
     case "run.quality":
-      return `Quality ${event.data.grade}: ${event.data.score}/100`;
+      return `Quality ${event.data.outcome}: ${event.data.verificationStrength} verification`;
   }
 }
 

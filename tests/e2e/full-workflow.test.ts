@@ -29,19 +29,28 @@ it("runs requirement through real tests and creates a Git commit", async () => {
       processRunner: createSandboxRunner(),
     });
 
-    assert.equal(execution.result.status, "SUCCEEDED");
+    assert.equal(
+      execution.result.status,
+      "SUCCEEDED",
+      JSON.stringify({ summary: execution.result.summary, gates: execution.result.context.gates }),
+    );
     assert.equal(provider.remainingResponses, 0);
     assert.equal(execution.result.context.repo.branch, "forgemind/e2e-run");
     assert.deepEqual(
       execution.result.context.gates.map((gate) => [gate.stage, gate.passed]),
       [
-        ["REVIEW", true],
         ["TEST", true],
+        ["REVIEW", true],
       ],
     );
     const head = await git(repo, ["rev-parse", "HEAD"]);
     assert.match(execution.result.summary, new RegExp(head.stdout.trim()));
     assert.match(await readFile(path.join(repo, "src/math.js"), "utf8"), /left \+ right/);
+    assert.equal((await git(repo, ["ls-files", "docs/.forgemind"])).stdout.trim(), "");
+    const planArtifact = execution.result.context.artifacts.find(
+      (artifact) => artifact.kind === "plan",
+    );
+    assert.match(planArtifact?.path ?? "", /\.git\/forgemind\/runs\/e2e-run\/artifacts\/plan\.md$/);
 
     const log = EventLog.open(path.dirname(execution.eventLogPath), "e2e-run");
     const events = await log.load();
@@ -57,15 +66,16 @@ it("runs requirement through real tests and creates a Git commit", async () => {
       events.some(
         (event) =>
           event.type === "llm.called" &&
-          event.data.promptVersion === "plan.v1" &&
+          event.data.promptVersion === "plan.v4" &&
           event.data.structuredOutput === true,
       ),
     );
     const quality = events.find((event) => event.type === "run.quality");
     assert.ok(quality);
-    assert.equal(quality.data.grade, "EXCELLENT");
-    assert.equal(quality.data.score, 100);
-    assert.equal(quality.data.codeCoveragePercent, null);
+    assert.equal(quality.data.outcome, "succeeded");
+    assert.equal(quality.data.evidenceCompleteness, 100);
+    assert.equal(quality.data.verificationStrength, "strong");
+    assert.equal(quality.data.coveragePercent, null);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -104,12 +114,12 @@ it("reproduces the workflow sequence and gate decisions for identical input", as
       ),
       [
         [
-          ["REVIEW", 1, true],
           ["TEST", 1, true],
+          ["REVIEW", 1, true],
         ],
         [
-          ["REVIEW", 1, true],
           ["TEST", 1, true],
+          ["REVIEW", 1, true],
         ],
       ],
     );
@@ -148,8 +158,9 @@ it("fails a complete run when the commit approval is rejected and audits the dec
   try {
     const execution = await runForgeMind({
       repoPath: repo,
-      requirement: "Add an integer addition function with tests",
-      provider: createDemoProvider(),
+      requirement:
+        "Add an integer addition function with tests while preserving the public API architecture",
+      provider: createDemoProvider(true),
       model: "fake-model",
       runId: "approval-rejected-run",
       noApprove: true,
@@ -178,23 +189,25 @@ it("fails a complete run when the commit approval is rejected and audits the dec
   }
 });
 
-it("injects memory from the first run into PLAN and ARCH on the second run", async () => {
+it("injects governed successful-run memory into PLAN and ARCH on the second run", async () => {
   const repo = await createDemoRepository();
   try {
     const first = await runForgeMind({
       repoPath: repo,
-      requirement: "Add an integer addition function with tests",
-      provider: createDemoProvider(),
+      requirement:
+        "Add an integer addition function with tests while preserving the public API architecture",
+      provider: createDemoProvider(true),
       model: "fake-model",
       runId: "memory-first-run",
       approveAll: true,
       memory: true,
       processRunner: createSandboxRunner(),
     });
-    const secondProvider = createDemoProvider();
+    const secondProvider = createDemoProvider(true, true);
     const second = await runForgeMind({
       repoPath: repo,
-      requirement: "Add an integer addition function with tests",
+      requirement:
+        "Add an integer addition function with tests while preserving the public API architecture",
       provider: secondProvider,
       model: "fake-model",
       runId: "memory-second-run",
@@ -203,12 +216,13 @@ it("injects memory from the first run into PLAN and ARCH on the second run", asy
       processRunner: createSandboxRunner(),
     });
 
-    assert.equal(second.result.status, "SUCCEEDED");
+    assert.equal(first.result.status, "SUCCEEDED", first.result.summary);
+    assert.equal(second.result.status, "SUCCEEDED", second.result.summary);
     const planPrompt = secondProvider.calls[0]?.messages.find((message) => message.role === "user");
     const archPrompt = secondProvider.calls[1]?.messages.find((message) => message.role === "user");
     assert.match(planPrompt?.content ?? "", /Historical run memory-first-run/);
     assert.match(archPrompt?.content ?? "", /Historical run memory-first-run/);
-    assert.match(planPrompt?.content ?? "", /Run quality EXCELLENT/);
+    assert.match(planPrompt?.content ?? "", /Independently verified run/);
     const firstEvents = await EventLog.open(
       path.dirname(first.eventLogPath),
       "memory-first-run",
@@ -216,8 +230,23 @@ it("injects memory from the first run into PLAN and ARCH on the second run", asy
     assert.ok(firstEvents.some((event) => event.type === "memory.stored"));
     const qualityLessons = JSON.parse(
       await readFile(path.join(repo, ".forgemind", "memory", "lessons.json"), "utf8"),
-    ) as { readonly entries: readonly { readonly content: string }[] };
-    assert.ok(qualityLessons.entries.some((entry) => entry.content.includes("Run quality")));
+    ) as {
+      readonly entries: readonly {
+        readonly content: string;
+        readonly validatedByRunIds: readonly string[];
+      }[];
+    };
+    assert.ok(
+      qualityLessons.entries.some((entry) => entry.content.includes("Independently verified run")),
+    );
+    assert.ok(
+      qualityLessons.entries.some(
+        (entry) =>
+          entry.content.includes("Independently verified run") &&
+          entry.validatedByRunIds.includes("memory-first-run") &&
+          entry.validatedByRunIds.includes("memory-second-run"),
+      ),
+    );
     const events = await EventLog.open(
       path.dirname(second.eventLogPath),
       "memory-second-run",
@@ -233,13 +262,14 @@ it("injects memory from the first run into PLAN and ARCH on the second run", asy
     assert.ok(
       events.some((event) => event.type === "memory.recalled" && event.data.scope === "project"),
     );
-    assert.ok(
-      events.some((event) => event.type === "memory.recalled" && event.data.scope === "semantic"),
+    const recalledProject = events.find(
+      (event) => event.type === "memory.recalled" && event.data.scope === "project",
     );
-    assert.equal(
-      events.some((event) => event.type === "memory.stored"),
-      false,
-    );
+    assert.equal(recalledProject?.type, "memory.recalled");
+    assert.ok(recalledProject.data.entryId.length > 0);
+    assert.ok(recalledProject.data.confidence > 0);
+    assert.ok(Number.isFinite(Date.parse(recalledProject.data.timestamp)));
+    assert.ok(events.some((event) => event.type === "memory.stored"));
     assert.equal(
       await git(repo, ["ls-files", ".forgemind/memory"]).then((result) => result.stdout.trim()),
       "",
@@ -273,18 +303,21 @@ it("runs three isolated tasks across two repositories and produces an unmerged P
             deps: [],
             repo: repositories[0],
             requirement: "Implement the service API addition behavior",
+            acceptanceCriteria: additionCriteriaJson(),
           },
           {
             taskId: "web-client",
             deps: [],
             repo: repositories[1],
             requirement: "Implement the web client addition behavior",
+            acceptanceCriteria: additionCriteriaJson(),
           },
           {
             taskId: "integration",
             deps: ["service-api", "web-client"],
             repo: repositories[0],
             requirement: "Verify the integration addition behavior",
+            acceptanceCriteria: additionCriteriaJson(),
           },
         ],
       }),
@@ -294,7 +327,7 @@ it("runs three isolated tasks across two repositories and produces an unmerged P
       repositories,
       requirement: "Ship addition behavior across service and web",
       provider: planner,
-      providerForTask: () => createDemoProvider(),
+      providerForTask: (task) => createDemoProvider(true, task.taskId === "integration"),
       model: "fake-model",
       parentRunId: "multi-repo-e2e",
       maxConcurrency: 2,
@@ -313,6 +346,15 @@ it("runs three isolated tasks across two repositories and produces an unmerged P
     assert.equal(execution.result.prList.length, 3);
     assert.equal(execution.workspaces.length, 3);
     assert.equal(new Set(execution.workspaces.map((workspace) => workspace.root)).size, 3);
+    const integrationResult = execution.result.tasks.find((task) => task.taskId === "integration");
+    assert.equal(integrationResult?.upstreamCommits?.length, 2);
+    const serviceBranch = execution.result.tasks.find(
+      (task) => task.taskId === "service-api",
+    )?.branch;
+    assert.equal(
+      execution.result.prList.find((candidate) => candidate.taskId === "integration")?.baseBranch,
+      serviceBranch,
+    );
     assert.ok(execution.prListPath);
     assert.deepEqual(
       JSON.parse(await readFile(execution.prListPath, "utf8")),
@@ -348,7 +390,7 @@ it("runs three isolated tasks across two repositories and produces an unmerged P
             `${originalBranches[repositories.indexOf(repository)]?.stdout.trim()}..${task.branch}`,
           ])
         ).stdout.trim(),
-        "1",
+        task.taskId === "integration" ? "2" : "1",
       );
       const events = await EventLog.open(
         path.join(repository, ".git", "forgemind", "runs"),
@@ -389,7 +431,7 @@ it("runs three isolated tasks across two repositories and produces an unmerged P
   }
 });
 
-it("negotiates a DAG artifact mismatch and persists the DecisionRecord in task memory", async () => {
+it("does not conflate identical artifact paths from different repositories", async () => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "forgemind-dag-negotiation-e2e-"));
   const repositories = await Promise.all([
     createDemoRepository(path.join(fixtureRoot, "service")),
@@ -405,32 +447,23 @@ it("negotiates a DAG artifact mismatch and persists the DecisionRecord in task m
             deps: [],
             repo: repositories[0],
             requirement: "Represent payment amounts for the service",
+            acceptanceCriteria: paymentCriteriaJson(),
           },
           {
             taskId: "web-contract",
             deps: [],
             repo: repositories[1],
             requirement: "Represent payment amounts for the web client",
+            acceptanceCriteria: paymentCriteriaJson(),
           },
           {
             taskId: "integration-contract",
             deps: ["service-contract", "web-contract"],
             repo: repositories[0],
             requirement: "Integrate the negotiated payment amount representation",
+            acceptanceCriteria: paymentCriteriaJson(),
           },
         ],
-      }),
-      JSON.stringify({
-        position: "Represent payment amounts as integer cents",
-        tradeoffs: ["Requires formatting at display boundaries"],
-        acceptsOther: false,
-        decision: "",
-      }),
-      JSON.stringify({
-        position: "Represent payment amounts as integer cents",
-        tradeoffs: ["Avoids floating-point rounding"],
-        acceptsOther: true,
-        decision: "Use integer cents for payment amounts",
       }),
     ]);
     const execution = await runDagForgeMind({
@@ -443,7 +476,8 @@ it("negotiates a DAG artifact mismatch and persists the DecisionRecord in task m
             ? "Payment amount uses integer cents"
             : task.taskId === "web-contract"
               ? "Payment amount uses decimal dollars"
-              : "Integration uses the negotiated integer cents representation",
+              : "Integration uses the inherited payment representation",
+          task.taskId === "integration-contract",
         ),
       model: "fake-model",
       parentRunId: "dag-artifact-negotiation-e2e",
@@ -454,99 +488,107 @@ it("negotiates a DAG artifact mismatch and persists the DecisionRecord in task m
       processRunner: createSandboxRunner(),
     });
 
-    assert.equal(execution.result.status, "SUCCEEDED");
+    assert.equal(
+      execution.result.status,
+      "SUCCEEDED",
+      JSON.stringify(execution.result.tasks, null, 2),
+    );
     assert.equal(parentProvider.remainingResponses, 0);
-    assert.equal(execution.result.decisionRecords.length, 1);
-    const decisionRecord = execution.result.decisionRecords[0];
-    assert.ok(decisionRecord);
-    assert.equal(decisionRecord.trigger, "artifact-mismatch");
-    assert.match(decisionRecord.decision, /integer cents/);
+    assert.equal(execution.result.decisionRecords.length, 0);
     const parentEvents = await EventLog.open(
       path.dirname(execution.eventLogPath),
       "dag-artifact-negotiation-e2e",
     ).load();
-    assert.deepEqual(
-      parentEvents
-        .filter((event) => event.type.startsWith("negotiation."))
-        .map((event) => event.type),
-      ["negotiation.started", "negotiation.round", "negotiation.resolved"],
+    assert.equal(
+      parentEvents.some((event) => event.type.startsWith("negotiation.")),
+      false,
     );
-    for (const workspace of execution.workspaces) {
-      const memory = JSON.parse(
-        await readFile(path.join(workspace.root, ".forgemind", "memory", "decisions.json"), "utf8"),
-      ) as { readonly entries: readonly { readonly content: string }[] };
-      assert.ok(
-        memory.entries.some(
-          (entry) =>
-            entry.content.includes("Cross-task artifact mismatch") &&
-            entry.content.includes("integer cents"),
-        ),
-      );
-    }
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
 });
 
-function createDemoProvider(): FakeChatProvider {
+function createDemoProvider(includeArchitecture = false, integration = false): FakeChatProvider {
   return new FakeChatProvider([
     JSON.stringify({
       objective: "Implement integer addition",
       steps: [
-        { id: "1", title: "Implement", description: "Implement add" },
+        { title: "Implement", description: "Implement add" },
         {
-          id: "2",
           title: "Test",
           description: "Cover positive and negative values",
         },
       ],
-      acceptanceCriteria: ["add returns the sum", "node tests pass"],
+      acceptanceCriteria: additionCriteriaJson(),
       summary: "Implement and test add",
     }),
+    ...(includeArchitecture
+      ? [
+          JSON.stringify({
+            decisions: ["Keep the existing ESM module"],
+            files: [
+              { path: "src/math.js", purpose: "Addition implementation" },
+              { path: "test/math.test.js", purpose: "Addition tests" },
+            ],
+            risks: ["Incorrect negative number handling"],
+            summary: "Extend the existing math module and use node:test",
+          }),
+        ]
+      : []),
     JSON.stringify({
-      decisions: ["Keep the existing ESM module"],
-      files: [
-        { path: "src/math.js", purpose: "Addition implementation" },
-        { path: "test/math.test.js", purpose: "Addition tests" },
-      ],
-      risks: ["Incorrect negative number handling"],
-      summary: "Extend the existing math module and use node:test",
-    }),
-    JSON.stringify({
-      summary: "Implemented addition with representative tests",
-      operations: [
-        {
-          tool: "write_file",
-          args: {
-            path: "src/math.js",
-            content: "export function add(left, right) {\n  return left + right;\n}\n",
-          },
-        },
-        {
-          tool: "write_file",
-          args: {
-            path: "test/math.test.js",
-            content:
-              "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { add } from '../src/math.js';\n\ntest('adds integers', () => {\n  assert.equal(add(2, 3), 5);\n  assert.equal(add(-2, 1), -1);\n});\n",
-          },
-        },
-      ],
+      basedOnEvidence: integration
+        ? "The upstream addition implementation is verified; this task still needs an integration marker"
+        : "The existing math module is a placeholder and the plan requires implementation plus tests",
+      todo: [],
+      actions: integration
+        ? [
+            {
+              kind: "write",
+              path: "src/integration.js",
+              content: "export const additionIntegrationVerified = true;\n",
+            },
+            { kind: "finish", evidence: "Recorded integration verification over upstream code" },
+          ]
+        : [
+            {
+              kind: "write",
+              path: "src/math.js",
+              content: "export function add(left, right) {\n  return left + right;\n}\n",
+            },
+            {
+              kind: "write",
+              path: "test/math.test.js",
+              content:
+                "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { add } from '../src/math.js';\n\ntest('adds integers', () => {\n  assert.equal(add(2, 3), 5);\n  assert.equal(add(-2, 1), -1);\n});\n",
+            },
+            {
+              kind: "finish",
+              evidence: "Implemented addition and signed integer regression tests",
+            },
+          ],
     }),
     JSON.stringify({
       approved: true,
       reason: "Implementation is correct and scoped",
       feedback: "No changes required",
       evidence: "Reviewed implementation and meaningful node:test coverage",
+      acceptanceCriteria: [
+        {
+          criterionId: "AC-1",
+          satisfied: true,
+          evidence: "src/math.js implements addition and test/math.test.js asserts the sum",
+        },
+      ],
     }),
   ]);
 }
 
-function createArtifactMismatchProvider(summary: string): FakeChatProvider {
+function createArtifactMismatchProvider(summary: string, integration = false): FakeChatProvider {
   return new FakeChatProvider([
     JSON.stringify({
       objective: "Implement the payment amount contract",
-      steps: [{ id: "1", title: "Implement", description: "Update the shared contract" }],
-      acceptanceCriteria: ["The payment amount representation is explicit"],
+      steps: [{ title: "Implement", description: "Update the shared contract" }],
+      acceptanceCriteria: paymentCriteriaJson(),
       summary: "Implement the payment amount contract",
     }),
     JSON.stringify({
@@ -556,24 +598,77 @@ function createArtifactMismatchProvider(summary: string): FakeChatProvider {
       summary,
     }),
     JSON.stringify({
-      summary,
-      operations: [
-        {
-          tool: "write_file",
-          args: {
-            path: "src/math.js",
-            content: `export const paymentAmountRepresentation = ${JSON.stringify(summary)};\n`,
-          },
-        },
-      ],
+      basedOnEvidence:
+        "The contract file is still a placeholder and needs an explicit representation plus coverage",
+      todo: [],
+      actions: integration
+        ? [
+            {
+              kind: "write",
+              path: "src/integration.js",
+              content: `export const integrationContract = ${JSON.stringify(summary)};\n`,
+            },
+            { kind: "finish", evidence: summary },
+          ]
+        : [
+            {
+              kind: "write",
+              path: "src/math.js",
+              content: `export const paymentAmountRepresentation = ${JSON.stringify(summary)};\n`,
+            },
+            {
+              kind: "write",
+              path: "test/math.test.js",
+              content:
+                "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { paymentAmountRepresentation } from '../src/math.js';\n\ntest('defines the payment amount representation', () => {\n  assert.equal(typeof paymentAmountRepresentation, 'string');\n});\n",
+            },
+            { kind: "finish", evidence: summary },
+          ],
     }),
     JSON.stringify({
       approved: true,
       reason: "The contract is explicit",
       feedback: "No changes required",
       evidence: "Reviewed the payment amount representation",
+      acceptanceCriteria: [
+        {
+          criterionId: "AC-1",
+          satisfied: true,
+          evidence: "src/math.js defines the payment amount representation explicitly",
+        },
+      ],
     }),
   ]);
+}
+
+function additionCriteriaJson() {
+  return [
+    {
+      description: "add returns the sum for positive and signed integers",
+      requiredEvidence: ["test", "review"],
+      verifier: { kind: "test-case", commandId: "primary", pattern: "adds integers" },
+    },
+    {
+      description: "node tests pass",
+      requiredEvidence: ["test"],
+      verifier: { kind: "test-suite", commandId: "primary" },
+    },
+  ];
+}
+
+function paymentCriteriaJson() {
+  return [
+    {
+      description: "The payment amount representation is explicit",
+      requiredEvidence: ["test", "review"],
+      verifier: {
+        kind: "file",
+        path: "src/math.js",
+        assertion: "contains",
+        value: "paymentAmountRepresentation",
+      },
+    },
+  ];
 }
 
 async function createDemoRepository(explicitPath?: string): Promise<string> {
@@ -581,7 +676,7 @@ async function createDemoRepository(explicitPath?: string): Promise<string> {
   await mkdir(path.join(repo, "src"), { recursive: true });
   await writeFile(
     path.join(repo, "package.json"),
-    `${JSON.stringify({ name: "demo", private: true, type: "module", scripts: { test: "node --test" } }, null, 2)}\n`,
+    `${JSON.stringify({ name: "demo", private: true, type: "module", scripts: { test: "node test/math.test.js" } }, null, 2)}\n`,
     "utf8",
   );
   await writeFile(

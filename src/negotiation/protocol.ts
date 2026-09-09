@@ -20,6 +20,7 @@ import type {
   NegotiationRoundNumber,
 } from "./types.js";
 import { stageForNegotiationTrigger } from "./types.js";
+import type { RunBudgetTracker } from "../core/run-budget.js";
 
 const DEFAULT_NEGOTIATION_BUDGET: TokenBudget = { input: 12_000, output: 3_000 };
 const TURN_OUTPUT_LIMIT = 1_000;
@@ -53,6 +54,8 @@ export interface ChatNegotiationTurnProviderOptions {
   readonly model: string;
   readonly eventLog: EventLog;
   readonly budget?: TokenBudget;
+  readonly signal?: AbortSignal;
+  readonly runBudget?: RunBudgetTracker;
 }
 
 export class ChatNegotiationTurnProvider implements NegotiationTurnProvider {
@@ -61,12 +64,16 @@ export class ChatNegotiationTurnProvider implements NegotiationTurnProvider {
   readonly #eventLog: EventLog;
   readonly #budget: TokenBudget;
   readonly #trackers = new Map<string, TokenBudgetTracker>();
+  readonly #signal: AbortSignal | undefined;
+  readonly #runBudget: RunBudgetTracker | undefined;
 
   public constructor(options: ChatNegotiationTurnProviderOptions) {
     this.#provider = options.provider;
     this.#model = options.model;
     this.#eventLog = options.eventLog;
     this.#budget = options.budget ?? DEFAULT_NEGOTIATION_BUDGET;
+    this.#signal = options.signal;
+    this.#runBudget = options.runBudget;
   }
 
   public async respond(input: NegotiationTurnInput): Promise<NegotiationTurnResult> {
@@ -74,6 +81,7 @@ export class ChatNegotiationTurnProvider implements NegotiationTurnProvider {
     const estimatedInput = estimateTokens(messages.map((message) => message.content).join("\n"));
     const tracker = this.trackerFor(input.negotiationId);
     tracker.ensureInputFits(estimatedInput);
+    const runReservation = this.#runBudget?.beforeLlm(estimatedInput, TURN_OUTPUT_LIMIT);
     const fingerprint = createHash("sha256").update(JSON.stringify(messages)).digest("hex");
     const structured = supportsStructuredOutput(this.#provider);
     let content: string;
@@ -86,17 +94,24 @@ export class ChatNegotiationTurnProvider implements NegotiationTurnProvider {
         maxOutputTokens: TURN_OUTPUT_LIMIT,
         seed: 42,
         ...(structured ? { structuredOutput: negotiationTurnSchema() } : {}),
+        ...(this.#signal === undefined ? {} : { signal: this.#signal }),
       });
       content = completion.content;
       inputTokens = completion.usage.inputTokens || estimatedInput;
       outputTokens = completion.usage.outputTokens || estimateTokens(content);
     } catch (error) {
+      if (runReservation !== undefined) {
+        this.#runBudget?.failLlm(runReservation, estimatedInput);
+      }
       await this.recordLlmCall(input, estimatedInput, 0, fingerprint, structured);
       throw error;
     }
     await this.recordLlmCall(input, inputTokens, outputTokens, fingerprint, structured);
     tracker.consumeInput(inputTokens);
     tracker.consumeOutput(outputTokens);
+    if (runReservation !== undefined) {
+      this.#runBudget?.settleLlm(runReservation, inputTokens, outputTokens);
+    }
     return parseTurnResult(content);
   }
 
@@ -241,6 +256,7 @@ export class NegotiationProtocol implements NegotiationCoordinator {
             trigger: request.trigger,
             rounds,
             decision,
+            requiredVerification: negotiatedReviewRequirement(decision),
             escalated: false,
             createdAt: new Date(this.#clock()).toISOString(),
           });
@@ -352,6 +368,7 @@ export class NegotiationProtocol implements NegotiationCoordinator {
           trigger: request.trigger,
           rounds,
           decision: candidate,
+          requiredVerification: negotiatedReviewRequirement(candidate),
           escalated: true,
           createdAt: new Date(this.#clock()).toISOString(),
         })
@@ -366,6 +383,11 @@ export class NegotiationProtocol implements NegotiationCoordinator {
       decisionRecord: record,
     };
   }
+}
+
+function negotiatedReviewRequirement(decision: string) {
+  const description = `Verify negotiated decision: ${decision}`;
+  return [{ description, verifier: { kind: "review" as const, rubric: description } }];
 }
 
 function messagesFor(input: NegotiationTurnInput): readonly ChatMessage[] {

@@ -28,6 +28,7 @@ export interface AgenticExecutionReceipt extends AgenticDispatchReceipt {
   readonly mode: "single" | "dag";
   readonly status: "SUCCEEDED" | "FAILED" | "BLOCKED" | "PARTIAL";
   readonly summary: string;
+  readonly eventLogPath?: string;
   readonly pullRequests: readonly AgenticPullRequestCandidate[];
 }
 
@@ -281,10 +282,13 @@ export class ForgeMindAgenticRunDispatcher implements AgenticRunDispatcher {
     this.#options = options;
   }
 
-  public async dispatch(request: AgenticRunRequest): Promise<AgenticExecutionReceipt> {
+  public async dispatch(
+    request: AgenticRunRequest,
+    signal?: AbortSignal,
+  ): Promise<AgenticExecutionReceipt> {
     const existing = this.#inFlight.get(request.id);
     if (existing !== undefined) return await existing;
-    const operation = this.dispatchImmediately(request);
+    const operation = this.dispatchImmediately(request, signal);
     this.#inFlight.set(request.id, operation);
     try {
       return await operation;
@@ -293,7 +297,10 @@ export class ForgeMindAgenticRunDispatcher implements AgenticRunDispatcher {
     }
   }
 
-  private async dispatchImmediately(request: AgenticRunRequest): Promise<AgenticExecutionReceipt> {
+  private async dispatchImmediately(
+    request: AgenticRunRequest,
+    signal?: AbortSignal,
+  ): Promise<AgenticExecutionReceipt> {
     const fingerprint = requestFingerprint(request);
     const claim = await this.#options.store.claim(request.id, fingerprint, baseRunId(request.id));
     if (claim.kind === "running") {
@@ -307,7 +314,7 @@ export class ForgeMindAgenticRunDispatcher implements AgenticRunDispatcher {
     }
     let receipt: AgenticExecutionReceipt;
     try {
-      receipt = await this.execute(request, claim.record.runId);
+      receipt = await this.execute(request, claim.record.runId, signal);
     } catch (error) {
       await this.#options.store.fail(request.id, fingerprint, errorMessage(error));
       throw error;
@@ -326,6 +333,7 @@ export class ForgeMindAgenticRunDispatcher implements AgenticRunDispatcher {
   private async execute(
     request: AgenticRunRequest,
     runId: string,
+    signal?: AbortSignal,
   ): Promise<AgenticExecutionReceipt> {
     const targets = [...(await this.#options.resolveRepositories(request))];
     validateTargets(targets, this.#options.config);
@@ -339,6 +347,7 @@ export class ForgeMindAgenticRunDispatcher implements AgenticRunDispatcher {
         ...this.#options.singleRunDefaults,
         repoPath: target.path,
         requirement: request.requirement,
+        requirementTrust: "untrusted",
         provider: this.#options.provider,
         model: this.#options.model,
         runId,
@@ -348,6 +357,7 @@ export class ForgeMindAgenticRunDispatcher implements AgenticRunDispatcher {
         toolAllowlist: governance.toolAllowlist,
         commandAllowlist: governance.commandAllowlist,
         riskTransform: governance.riskTransform,
+        ...(signal === undefined ? {} : { signal }),
       });
       return singleReceipt(request, target, runId, execution);
     }
@@ -364,6 +374,7 @@ export class ForgeMindAgenticRunDispatcher implements AgenticRunDispatcher {
       toolAllowlist: governance.toolAllowlist,
       commandAllowlist: governance.commandAllowlist,
       riskTransform: governance.riskTransform,
+      ...(signal === undefined ? {} : { signal }),
     });
     return dagReceipt(request, targets, runId, execution);
   }
@@ -403,6 +414,7 @@ function singleReceipt(
     mode: "single",
     status: execution.result.status,
     summary: execution.result.summary,
+    eventLogPath: execution.eventLogPath,
     pullRequests,
   };
 }
@@ -431,6 +443,7 @@ function dagReceipt(
       workspace.root,
       candidate.branch,
       candidate.summary,
+      candidate.baseBranch,
     );
   });
   return {
@@ -438,6 +451,7 @@ function dagReceipt(
     mode: "dag",
     status: execution.result.status,
     summary: execution.plan.summary,
+    eventLogPath: execution.eventLogPath,
     pullRequests,
   };
 }
@@ -448,13 +462,14 @@ function pullRequestCandidate(
   localPath: string,
   head: string,
   summary: string,
+  baseBranch?: string,
 ): AgenticPullRequestCandidate {
   if (head === "test") throw new Error("The test branch cannot be used as a PR source");
   return {
     repository: target.repository,
     localPath,
     head,
-    base: target.baseBranch,
+    base: baseBranch ?? target.baseBranch,
     title: boundedText(`[ForgeMind] ${request.origin.object.title ?? request.requirement}`, 240),
     body: [
       `Agentic run: ${baseRunId(request.id)}`,
@@ -462,7 +477,7 @@ function pullRequestCandidate(
       "",
       summary,
       "",
-      "This pull request was created by ForgeMind. No branch was merged automatically.",
+      "This pull request was created by ForgeMind. No target pull request was merged automatically.",
     ].join("\n"),
   };
 }
@@ -547,6 +562,7 @@ function parseDispatchRecord(value: unknown): AgenticDispatchRecord {
 function parseReceipt(value: unknown): AgenticExecutionReceipt {
   const input = objectValue(value, "agentic dispatch receipt");
   const pullRequests = input["pullRequests"];
+  const eventLogPath = optionalText(input["eventLogPath"]);
   if (!Array.isArray(pullRequests)) throw new Error("Receipt pullRequests must be an array");
   return {
     runId: requiredText(input["runId"], "receipt.runId"),
@@ -557,6 +573,7 @@ function parseReceipt(value: unknown): AgenticExecutionReceipt {
       "receipt.status",
     ),
     summary: requiredText(input["summary"], "receipt.summary"),
+    ...(eventLogPath === undefined ? {} : { eventLogPath }),
     pullRequests: pullRequests.map((entry) => {
       const candidate = objectValue(entry, "pull request candidate");
       return {

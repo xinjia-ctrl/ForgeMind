@@ -14,6 +14,15 @@ export { LexicalEmbeddingProvider, SemanticMemory } from "./memory/semantic-memo
 export { OpenAICompatibleEmbeddingProvider } from "./memory/openai-compatible-embedding-provider.js";
 export { EventLog } from "./core/event-log.js";
 export { Orchestrator } from "./core/orchestrator.js";
+export { FileRunCheckpointStore, parseRunCheckpoint } from "./core/run-checkpoint.js";
+export {
+  acceptanceContractHash,
+  assertAcceptanceContract,
+  assertAcceptanceSatisfied,
+  renderAcceptanceContract,
+  reviewCriterion,
+  testSuiteCriterion,
+} from "./core/acceptance.js";
 export { OpenAICompatibleChatProvider } from "./llm/openai-compatible-provider.js";
 export { DagPlanner, parseDagPlan, validateDagTasks } from "./dag/plan.js";
 export { DagScheduler, childRunId } from "./dag/scheduler.js";
@@ -45,6 +54,7 @@ export {
   ForgeMindAgenticRunDispatcher,
 } from "./agentic/dispatcher.js";
 export { AgenticFeedbackCoordinator, GitBranchPublisher } from "./agentic/feedback.js";
+export { ApprovalExternalActionGovernor } from "./agentic/external-action.js";
 export { ChatNegotiationTurnProvider, NegotiationProtocol } from "./negotiation/protocol.js";
 export {
   detectArchitectureConflict,
@@ -54,6 +64,33 @@ export {
 export { createDecisionRecord, persistDecisionRecord } from "./negotiation/record.js";
 export type { DecisionRecordStore } from "./negotiation/record.js";
 export { evaluateRunQuality } from "./quality/metrics.js";
+export { createWebApp, parseWebRunRequest, progressFromEvents, startWebApp } from "./web/server.js";
+export type {
+  DirectoryEntry,
+  DirectoryListing,
+  RepositoryInspection,
+  WebRunProgress,
+  WebRunRequest,
+  WebRunResult,
+  WebRunView,
+  WebProviderModelOption,
+  WebProviderOption,
+  WebUiDefaults,
+} from "./web/types.js";
+export {
+  configuredProviderId,
+  inferProviderId,
+  PROVIDER_CATALOG,
+  providerDefinition,
+  resolveProviderApiKey,
+  resolveProviderCredential,
+} from "./llm/provider-catalog.js";
+export type {
+  ProviderCredential,
+  ProviderDefinition,
+  ProviderId,
+  ProviderModelDefinition,
+} from "./llm/provider-catalog.js";
 export {
   AGENTIC_ACTOR_ID,
   agenticRunGovernance,
@@ -61,7 +98,34 @@ export {
   escalateAgenticRisk,
 } from "./agentic/guardrail.js";
 export type { ChatProvider } from "./llm/chat-provider.js";
-export type { RunResult, TaskContext } from "./core/types.js";
+export type {
+  AcceptanceCriterion,
+  AcceptanceVerifier,
+  RequiredEvidence,
+  RunResult,
+  TaskContext,
+  UpstreamHandoff,
+  VerificationEvidence,
+} from "./core/types.js";
+export {
+  AcceptanceVerifierRegistry,
+  type AcceptanceVerifierRegistryOptions,
+  type BehaviorProbe,
+} from "./verification/acceptance-verifier.js";
+export type {
+  CheckpointReworkRecord,
+  RunCheckpoint,
+  RunCheckpointStore,
+  RunPhase,
+} from "./core/run-checkpoint.js";
+export type { MemoryCorrection, ProjectMemoryOptions } from "./memory/project-memory.js";
+export type {
+  ProjectMemoryDocument,
+  ProjectMemoryEntry,
+  ProjectMemoryFile,
+  ProjectMemoryPermissions,
+  ProjectMemoryStatus,
+} from "./memory/project-memory-document.js";
 export type {
   MemoryProvider,
   MemoryScope,
@@ -175,15 +239,25 @@ export type {
   GitBranchPublisherOptions,
 } from "./agentic/feedback.js";
 export type {
+  ApprovalExternalActionGovernorOptions,
+  ExternalAction,
+  ExternalActionGovernor,
+} from "./agentic/external-action.js";
+export type {
+  ConflictDecision,
+  ConflictEvidence,
+  ConflictResolver,
   DecisionRecord,
   Negotiation,
   NegotiationArtifact,
   NegotiationCoordinator,
   NegotiationEvidence,
+  NegotiatedVerificationRequirement,
   NegotiationRequest,
   NegotiationRound,
   NegotiationTrigger,
 } from "./negotiation/types.js";
+export { OneShotConflictResolver } from "./negotiation/resolver.js";
 export type {
   ChatNegotiationTurnProviderOptions,
   NegotiationProtocolOptions,
@@ -191,4 +265,23 @@ export type {
   NegotiationTurnProvider,
   NegotiationTurnResult,
 } from "./negotiation/protocol.js";
-export type { CoverageSource, QualityGrade, RunQualityMetrics } from "./quality/types.js";
+export type { RunQuality, RunQualityMetrics, VerificationStrength } from "./quality/types.js";
+export type { RunProfile, RunProfileDecision, RunProfileSignals } from "./core/run-profile.js";
+export { selectRunProfile } from "./core/run-profile.js";
+export type { RunBudget, RunBudgetSnapshot, RunStopReason } from "./core/run-budget.js";
+export { DEFAULT_RUN_BUDGET, RunBudgetTracker, RunStopFailure } from "./core/run-budget.js";
+export {
+  assertResumeManifest,
+  initialAcceptanceHash,
+  manifestForContext,
+  sha256,
+} from "./core/run-manifest.js";
+export type { RunManifest } from "./core/run-manifest.js";
+export { FileActionJournal } from "./core/action-journal.js";
+export type {
+  ActionJournal,
+  ActionJournalRecord,
+  ActionJournalState,
+} from "./core/action-journal.js";
+export { FileRunArtifactStore } from "./core/run-artifact-store.js";
+export type { RunArtifactStore } from "./core/run-artifact-store.js";

@@ -1,10 +1,10 @@
 # ForgeMind 架构设计文档（ADR）— 研发操作系统（v3.0 完整版）
 
 > 迭代：v3.0（第九轮，终极形态）
-> 对齐：`docs/PRD-v3.0-os.md`（终极形态主线）
+> 对齐：`PRD-v3.0-os.md`（终极形态主线）
 > 实现基线：`src/agentic/` 主动闭环、`src/negotiation/` 有界协商、L4 语义记忆与 A4 质量回馈均已落地
 > 状态：A1 主动层、A2 协商、A3 L4 记忆与 A4 质量回馈均已实现
-> 验证：`npm run check` 通过（151 项：148 通过，3 项真实依赖 smoke 条件跳过）
+> 验证：`npm run check` 通过（157 项：154 通过，3 项真实依赖 smoke 条件跳过）
 > 技术栈：TypeScript / Node，**严守零运行时第三方依赖**
 
 > 说明：`ARCHITECTURE-v3.0-agentic.md` 细化主动触发与执行回写层；本文档是对齐 `PRD-v3.0-os.md` 的**已实现完整架构**，统一描述 A1 主动闭环、A2 协商、A3 记忆和 A4 质量回馈。
@@ -208,7 +208,7 @@ golden 快照同步；`parseEvent` 兼容旧日志；`workflowSignature` 按 run
 | A3     | 词法相关性、外部 EmbeddingProvider 契约/真实 smoke、DecisionRecord 跨 Run 检索   | ✅ 单元 + e2e + 发布 smoke                            |
 | A4     | 质量指标聚合、事件/审计、L3 教训、后续提示词召回、报告面板                       | ✅ 单元 + golden + e2e                                |
 
-回归要求：`npm run check` + 既有测试 + 本轮新增全部通过。当前共 151 个测试用例；本地结果为 148 通过、3 个真实依赖 smoke 因无外部运行时/凭据而条件跳过，发布门禁禁止跳过。
+回归要求：`npm run check` + 既有测试 + 本轮新增全部通过。当前共 157 个测试用例；本地结果为 154 通过、3 个真实依赖 smoke 因无外部运行时/凭据而条件跳过，发布门禁禁止跳过。
 
 ## 10. 风险与决策记录
 

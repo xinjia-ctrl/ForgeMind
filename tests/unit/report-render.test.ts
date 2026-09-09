@@ -76,6 +76,11 @@ describe("report HTML rendering", () => {
 
     assert.match(html, /^<!doctype html>/);
     assert.match(html, /Content-Security-Policy/);
+    assert.match(html, /<meta name="color-scheme" content="light">/);
+    assert.match(html, /color-scheme:light/);
+    assert.match(html, /--bg:#f2e8d9/);
+    assert.match(html, /--panel:#fffaf2/);
+    assert.doesNotMatch(html, /color-scheme:dark|--bg:#090b10/);
     assert.match(html, /&lt;script&gt;alert\(&#39;requirement&#39;\)&lt;\/script&gt;/);
     assert.match(html, /Policy &lt;b&gt;denied&lt;\/b&gt;/);
     assert.match(html, /&lt;redacted:.*bytes&gt;/);
@@ -107,6 +112,9 @@ describe("report HTML rendering", () => {
         stage: "ARCH",
         scope: "project",
         source: ".forgemind/memory/decisions.json",
+        entryId: "decision-router",
+        timestamp: "2000-01-01T00:00:00.000Z",
+        confidence: 0.8,
         score: 3,
         reason: "matched router <decision>",
         content: "<redacted:20 bytes>",
@@ -146,33 +154,27 @@ describe("report HTML rendering", () => {
     assert.doesNotMatch(html, /redacted:20/);
   });
 
-  it("renders the quality score, evidence, coverage, and recommendations", () => {
+  it("renders evidence completeness, verification strength, coverage, and confidence", () => {
     const model = buildReportViewModel([
       event(1, "run.quality", {
         runId: "quality-panel-run",
         requirement: "Render quality evidence",
-        status: "SUCCEEDED",
-        score: 88,
-        grade: "GOOD",
-        gatePassRate: 75,
-        gatesPassed: 3,
-        gatesTotal: 4,
+        outcome: "succeeded",
+        evidenceCompleteness: 100,
+        verificationStrength: "strong",
+        coveragePercent: 92.5,
         reworkRounds: 1,
-        testPassRate: 100,
-        testsPassed: 1,
-        testsTotal: 1,
-        codeCoveragePercent: 92.5,
-        coverageSource: "test-output",
-        recommendations: ["Fix <boundary> feedback earlier."],
+        policyViolations: 0,
+        confidence: 0.92,
       }),
     ]);
 
     const html = renderReportHtml(model);
     assert.match(html, /QUALITY ASSESSMENT/);
     assert.match(html, /Deterministic run quality/);
-    assert.match(html, /GOOD/);
+    assert.match(html, /strong/);
     assert.match(html, /92\.50%/);
-    assert.match(html, /Fix &lt;boundary&gt; feedback earlier/);
+    assert.match(html, /92\.0%/);
   });
 });
 

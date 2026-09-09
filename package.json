@@ -1,12 +1,20 @@
 {
   "name": "forgemind",
   "version": "3.0.0",
-  "description": "Production-oriented multi-agent coding workflow orchestrator",
+  "description": "Evidence-gated multi-agent coding workflow orchestrator",
   "type": "module",
   "private": false,
   "files": [
     "dist/src",
-    "README.md"
+    "README.md",
+    "docs/README.md",
+    "docs/PRD.md",
+    "docs/ARCHITECTURE.md",
+    "docs/PRODUCT_MANUAL.md",
+    "docs/EVALUATION.md",
+    "docs/LIMITATIONS.md",
+    "docs/VISION.md",
+    "docs/history"
   ],
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -33,12 +41,31 @@
     "test": "npm run build && node --test dist/tests/*/*.test.js",
     "test:smoke": "npm run build && node --test dist/tests/smoke/*.test.js",
     "test:smoke:release": "npm run build && node scripts/run-release-smoke.mjs",
-    "eval": "npm run build && node dist/evals/prompt-eval.js",
+    "web": "npm run build && node --env-file-if-exists=.env dist/src/runtime/cli.js web",
+    "eval": "npm run prompt:contract && npm run eval:real",
+    "prompt:contract": "npm run build && node dist/evals/prompt-eval.js",
+    "eval:contract": "npm run prompt:contract",
+    "eval:real": "npm run build && node --env-file-if-exists=.env dist/evals/agent-eval.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xinjia-ctrl/ForgeMind.git"
+  },
+  "homepage": "https://github.com/xinjia-ctrl/ForgeMind#readme",
+  "bugs": {
+    "url": "https://github.com/xinjia-ctrl/ForgeMind/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "coding-agent",
+    "orchestration",
+    "verification",
+    "typescript"
+  ],
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "^24.0.0",

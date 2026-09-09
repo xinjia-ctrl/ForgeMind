@@ -1,4 +1,4 @@
-import type { ArtifactRef, StageId } from "../core/types.js";
+import type { AcceptanceVerifier, ArtifactRef, StageId } from "../core/types.js";
 
 export const NEGOTIATION_TRIGGERS = [
   "arch-conflict",
@@ -27,6 +27,7 @@ export interface DecisionRecord {
     readonly position: string;
   }[];
   readonly decision: string;
+  readonly requiredVerification: readonly NegotiatedVerificationRequirement[];
   readonly escalated: boolean;
   readonly createdAt: string;
 }
@@ -56,8 +57,30 @@ export interface NegotiationCoordinator {
   negotiate(request: NegotiationRequest): Promise<Negotiation>;
 }
 
+export interface ConflictEvidence extends NegotiationRequest {
+  readonly rubric?: string;
+}
+
+export interface ConflictDecision {
+  readonly selection: "proposal" | "counter" | "synthesize" | "escalate";
+  readonly decision: string;
+  readonly rationale: string;
+  readonly risks: readonly string[];
+  readonly requiredVerification: readonly NegotiatedVerificationRequirement[];
+}
+
+export interface NegotiatedVerificationRequirement {
+  readonly description: string;
+  readonly verifier: Exclude<AcceptanceVerifier, { readonly kind: "behavior" }>;
+}
+
+export interface ConflictResolver {
+  resolve(evidence: ConflictEvidence): Promise<ConflictDecision>;
+}
+
 export interface NegotiationArtifact {
   readonly taskId: string;
+  readonly repo: string;
   readonly artifact: ArtifactRef;
 }
 

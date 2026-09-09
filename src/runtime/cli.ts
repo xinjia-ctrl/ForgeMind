@@ -15,6 +15,7 @@ import { OpenAICompatibleChatProvider } from "../llm/openai-compatible-provider.
 import { generateReport } from "../report/report.js";
 import { inspectGitWorkspace } from "./git-workspace.js";
 import { runForgeMind } from "./run.js";
+import { startWebApp } from "../web/server.js";
 
 interface ParsedArgs {
   readonly command: string;
@@ -30,7 +31,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         "requirement",
         "model",
         "base-url",
+        "temperature",
         "run-id",
+        "resume",
         "test-command",
         "max-rework",
         "skip-git-hooks",
@@ -50,6 +53,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         "requirement",
         "model",
         "base-url",
+        "temperature",
         "run-id",
         "test-command",
         "max-rework",
@@ -82,6 +86,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       ]);
       return await auditExportCommand(parsed.values);
     }
+    if (parsed.command === "web") {
+      assertKnownOptions(parsed.values, ["port", "config"]);
+      return await webCommand(parsed.values);
+    }
     if (parsed.command === "replay") {
       assertKnownOptions(parsed.values, ["repo", "run-id"]);
       return await replayCommand(parsed.values);
@@ -96,6 +104,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stderr.write(`ForgeMind error: ${errorMessage(error)}\n`);
     return 1;
   }
+}
+
+async function webCommand(values: ReadonlyMap<string, string>): Promise<number> {
+  const port = optionalPort(values, "port");
+  const app = await startWebApp({
+    ...(port === undefined ? {} : { port }),
+    ...optionalValue(values, "config", "configPath"),
+  });
+  process.stdout.write(`ForgeMind Web is ready: ${app.url}\n`);
+  return 0;
 }
 
 async function auditExportCommand(values: ReadonlyMap<string, string>): Promise<number> {
@@ -170,11 +188,13 @@ async function dagRunCommand(values: ReadonlyMap<string, string>): Promise<numbe
   const actor = await optionalActor(values);
   if (approveAll && noApprove) throw new Error("--yes and --no-approve cannot be combined");
   const { model, provider } = llmFrom(values);
+  const cancellation = processCancellation();
   const execution = await runDagForgeMind({
     repositories,
     requirement,
     provider,
     model,
+    signal: cancellation.signal,
     ...optionalValue(values, "run-id", "parentRunId"),
     ...optionalValue(values, "test-command", "testCommand"),
     ...optionalValue(values, "config", "configPath"),
@@ -188,7 +208,7 @@ async function dagRunCommand(values: ReadonlyMap<string, string>): Promise<numbe
     memory,
     ...(actor === undefined ? {} : { actor }),
     ...optionalValue(values, "team", "team"),
-  });
+  }).finally(cancellation.dispose);
   process.stdout.write(
     `${JSON.stringify(
       {
@@ -240,17 +260,22 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
   const approveAll = parseBooleanOption(values, "yes", false);
   const noApprove = parseBooleanOption(values, "no-approve", false);
   const memory = parseBooleanOption(values, "memory", false);
+  const runId = values.get("run-id");
+  const resume = parseBooleanOption(values, "resume", false);
+  if (resume && runId === undefined) throw new Error("--resume requires --run-id");
   const actor = await optionalActor(values);
   if (approveAll && noApprove) throw new Error("--yes and --no-approve cannot be combined");
   const { model, provider } = llmFrom(values);
-  const runId = values.get("run-id");
   const testCommand = values.get("test-command");
   const configPath = values.get("config");
+  const cancellation = processCancellation();
   const execution = await runForgeMind({
     repoPath,
     requirement,
     provider,
     model,
+    signal: cancellation.signal,
+    resume,
     ...(runId === undefined ? {} : { runId }),
     ...(testCommand === undefined ? {} : { testCommand }),
     ...(maxRework === undefined ? {} : { maxRework }),
@@ -261,7 +286,7 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
     ...(actor === undefined ? {} : { actor }),
     ...optionalValue(values, "team", "team"),
     ...(configPath === undefined ? {} : { configPath }),
-  });
+  }).finally(cancellation.dispose);
   process.stdout.write(
     `${JSON.stringify(
       {
@@ -301,7 +326,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   const command = nestedCommand === undefined ? rootCommand : `${rootCommand} ${nestedCommand}`;
   const firstOptionIndex = nestedCommand === undefined ? 1 : 2;
   const values = new Map<string, string>();
-  const booleanOptions = new Set(["skip-git-hooks", "yes", "no-approve", "memory"]);
+  const booleanOptions = new Set(["skip-git-hooks", "yes", "no-approve", "memory", "resume"]);
   for (let index = firstOptionIndex; index < argv.length;) {
     const flag = argv[index];
     if (flag === undefined || !flag.startsWith("--")) {
@@ -338,8 +363,32 @@ function llmFrom(values: ReadonlyMap<string, string>): {
       apiKey,
       baseUrl:
         values.get("base-url") ?? process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1",
+      structuredOutput: process.env["FORGEMIND_STRUCTURED_OUTPUT"] !== "0",
+      ...temperatureOverride(values),
     }),
   };
+}
+
+function temperatureOverride(values: ReadonlyMap<string, string>): {
+  readonly temperatureOverride?: number;
+} {
+  const value = values.get("temperature") ?? process.env["FORGEMIND_TEMPERATURE"];
+  if (value === undefined || value.trim().length === 0) return {};
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2) {
+    throw new Error("--temperature/FORGEMIND_TEMPERATURE must be between 0 and 2");
+  }
+  return { temperatureOverride: parsed };
+}
+
+function optionalPort(values: ReadonlyMap<string, string>, key: string): number | undefined {
+  const value = values.get(key);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
+    throw new Error(`--${key} must be an integer between 1 and 65535`);
+  }
+  return parsed;
 }
 
 function optionalNonNegativeInteger(
@@ -421,9 +470,23 @@ function assertKnownOptions(values: ReadonlyMap<string, string>, allowed: readon
   }
 }
 
+function processCancellation(): { readonly signal: AbortSignal; readonly dispose: () => void } {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
+    },
+  };
+}
+
 function printHelp(): void {
   process.stdout.write(
-    `ForgeMind\n\nUsage:\n  forge-mind run --repo <path> --requirement <text> [--model <name>] [--test-command <command>] [--max-rework <n>] [--config <path>] [--yes | --no-approve] [--actor-policy <path> --actor <id>] [--memory] [--skip-git-hooks]\n  forge-mind dag run --repos <a,b,c> --requirement <text> [--max-concurrency <n>] [--worktrees-root <path>] [--yes | --no-approve] [--actor-policy <path> --actor <id>]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n  forge-mind audit export --repo <path> --from <ISO> --to <ISO> --actor-policy <path> --actor <id> [--filter-actor <id>] [--filter-repo <path>] [--status <status>] [--format json|csv]\n\nEnvironment:\n  OPENAI_API_KEY                 Required for run\n  OPENAI_BASE_URL                OpenAI-compatible API base URL\n  FORGEMIND_MODEL                Default model name\n  FORGEMIND_STRUCTURED_OUTPUT    Set 0 to disable native structured output\n  FORGEMIND_GLOBAL_CONFIG        Global policy config path\n  FORGEMIND_POLICY_JSON          Environment policy override\n`,
+    `ForgeMind\n\nUsage:\n  forge-mind web [--port <number>] [--config <path>]\n  forge-mind run --repo <path> --requirement <text> [--run-id <id> --resume] [--model <name>] [--temperature <0-2>] [--test-command <command>] [--max-rework <n>] [--config <path>] [--yes | --no-approve] [--actor-policy <path> --actor <id>] [--memory] [--skip-git-hooks]\n  forge-mind dag run --repos <a,b,c> --requirement <text> [--max-concurrency <n>] [--worktrees-root <path>] [--yes | --no-approve] [--actor-policy <path> --actor <id>]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n  forge-mind audit export --repo <path> --from <ISO> --to <ISO> --actor-policy <path> --actor <id> [--filter-actor <id>] [--filter-repo <path>] [--status <status>] [--format json|csv]\n\nEnvironment:\n  OPENAI_API_KEY                 Required for run\n  OPENAI_BASE_URL                OpenAI-compatible API base URL\n  FORGEMIND_MODEL                Default model name\n  FORGEMIND_TEMPERATURE          Optional provider compatibility override (0-2)\n  FORGEMIND_STRUCTURED_OUTPUT    Set 0 to disable native structured output\n  FORGEMIND_GLOBAL_CONFIG        Global policy config path\n  FORGEMIND_POLICY_JSON          Environment policy override\n`,
   );
 }
 

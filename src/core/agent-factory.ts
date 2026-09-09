@@ -1,10 +1,10 @@
 import { ArchitectureAgent, ARCH_TOOLS } from "../agents/architecture-agent.js";
 import type { BaseAgentOptions } from "../agents/base-agent.js";
 import { CodeAgent, CODE_TOOLS } from "../agents/code-agent.js";
-import { CommitAgent, COMMIT_TOOLS } from "../agents/commit-agent.js";
+import { CommitExecutor, COMMIT_TOOLS } from "../agents/commit-agent.js";
 import { PlanAgent, PLAN_TOOLS } from "../agents/plan-agent.js";
 import { ReviewAgent, REVIEW_TOOLS } from "../agents/review-agent.js";
-import { TestAgent, TEST_TOOLS } from "../agents/test-agent.js";
+import { TestGate, TEST_TOOLS } from "../agents/test-agent.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
 import type { ApprovalContext, RiskLevel } from "../auth/types.js";
 import type { MemoryProvider } from "../memory/memory-provider.js";
@@ -14,6 +14,10 @@ import { ScopedToolExecutor, type ToolRegistry } from "../tools/executor.js";
 import { ToolPolicy } from "../tools/types.js";
 import type { EventLog } from "./event-log.js";
 import type { StageAgent, StageId, TokenBudgets } from "./types.js";
+import type { AcceptanceVerifierRegistry } from "../verification/acceptance-verifier.js";
+import type { RunArtifactStore } from "./run-artifact-store.js";
+import type { RunBudgetTracker } from "./run-budget.js";
+import type { ActionJournal } from "./action-journal.js";
 
 interface AgentFactoryOptions {
   readonly provider: ChatProvider;
@@ -24,6 +28,7 @@ interface AgentFactoryOptions {
   readonly workspaceRoot: string;
   readonly budgets: TokenBudgets;
   readonly testCommand: readonly string[];
+  readonly acceptanceVerifiers: AcceptanceVerifierRegistry;
   readonly skipGitHooks: boolean;
   readonly policyResolver: PolicyResolver;
   readonly approvalGateway: ApprovalGateway;
@@ -32,6 +37,10 @@ interface AgentFactoryOptions {
   readonly toolAllowlist?: readonly string[];
   readonly commandAllowlist?: readonly (readonly string[])[];
   readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
+  readonly signal?: AbortSignal;
+  readonly artifactStore: RunArtifactStore;
+  readonly runBudget: RunBudgetTracker;
+  readonly actionJournal: ActionJournal;
 }
 
 export interface AgentFactory {
@@ -57,6 +66,7 @@ export class DefaultAgentFactory implements AgentFactory {
       policy,
       policyResolver: this.#options.policyResolver,
       approvalGateway: this.#options.approvalGateway,
+      runBudget: this.#options.runBudget,
       ...(this.#options.riskTransform === undefined
         ? {}
         : { riskTransform: this.#options.riskTransform }),
@@ -71,21 +81,31 @@ export class DefaultAgentFactory implements AgentFactory {
       toolExecutor,
       budget: this.#options.budgets[stage],
       memory: this.#options.memory,
+      runBudget: this.#options.runBudget,
+      ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),
     };
 
     switch (stage) {
       case "PLAN":
-        return new PlanAgent(common);
+        return new PlanAgent({ ...common, artifactStore: this.#options.artifactStore });
       case "ARCH":
-        return new ArchitectureAgent(common);
+        return new ArchitectureAgent({ ...common, artifactStore: this.#options.artifactStore });
       case "CODE":
-        return new CodeAgent(common);
+        return new CodeAgent({
+          ...common,
+          fastChecks: { primary: this.#options.testCommand },
+          actionJournal: this.#options.actionJournal,
+        });
       case "REVIEW":
         return new ReviewAgent(common);
       case "TEST":
-        return new TestAgent({ ...common, testCommand: this.#options.testCommand });
+        return new TestGate({
+          ...common,
+          testCommand: this.#options.testCommand,
+          verifiers: this.#options.acceptanceVerifiers,
+        });
       case "COMMIT":
-        return new CommitAgent(common);
+        return new CommitExecutor(common);
     }
   }
 }
@@ -112,30 +132,32 @@ function policyFor(
   tools: readonly string[],
   options: AgentFactoryOptions,
 ): ToolPolicy {
-  const writable = stage === "PLAN" || stage === "ARCH" || stage === "CODE" || stage === "COMMIT";
+  const writable = stage === "CODE" || stage === "COMMIT";
   const allowedTools =
     options.toolAllowlist === undefined
       ? tools
       : tools.filter((tool) => options.toolAllowlist?.includes(tool) === true);
   const allowedCommands =
-    stage !== "TEST"
+    stage !== "TEST" && stage !== "CODE"
       ? []
-      : options.commandAllowlist === undefined
+      : stage === "CODE"
         ? [options.testCommand]
-        : options.commandAllowlist.filter((command) => sameCommand(command, options.testCommand));
+        : options.commandAllowlist === undefined
+          ? options.acceptanceVerifiers.commandAllowlist
+          : options.acceptanceVerifiers.commandAllowlist.filter((command) =>
+              options.commandAllowlist?.some((allowed) => sameCommand(command, allowed)),
+            );
   return new ToolPolicy({
     workspaceRoot: options.workspaceRoot,
     stage,
     allowedTools,
     writable,
-    ...(stage === "PLAN" || stage === "ARCH"
-      ? { writablePrefixes: [`docs/.forgemind/${options.runId}`] }
-      : {}),
     ...(stage === "CODE" ? { forbiddenWritePrefixes: ["docs/.forgemind"] } : {}),
-    ...(stage === "TEST" ? { allowedCommands } : {}),
+    ...(stage === "TEST" || stage === "CODE" ? { allowedCommands } : {}),
     ...(stage === "COMMIT" ? { skipGitHooks: options.skipGitHooks } : {}),
     maxResultBytes: stage === "CODE" ? 128_000 : stage === "REVIEW" ? 72_000 : 32_000,
-    commandTimeoutMs: stage === "TEST" ? 300_000 : 120_000,
+    commandTimeoutMs: stage === "TEST" || stage === "CODE" ? 300_000 : 120_000,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 }
 

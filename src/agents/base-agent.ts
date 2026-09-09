@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { EventLog } from "../core/event-log.js";
-import { classifyFailure, errorMessage, StageFailure } from "../core/errors.js";
+import { classifyFailure, errorMessage, StageFailure, throwIfCancelled } from "../core/errors.js";
 import { estimateTokens, TokenBudgetTracker } from "../core/token-budget.js";
+import type { RunBudgetTracker } from "../core/run-budget.js";
 import type {
   AgentLifecycle,
   ArtifactRef,
@@ -30,6 +31,8 @@ export interface BaseAgentOptions {
   readonly toolExecutor: ScopedToolExecutor;
   readonly budget: TokenBudget;
   readonly memory: MemoryProvider;
+  readonly signal?: AbortSignal;
+  readonly runBudget?: RunBudgetTracker;
 }
 
 export abstract class BaseAgent implements StageAgent {
@@ -39,8 +42,10 @@ export abstract class BaseAgent implements StageAgent {
   readonly #provider: ChatProvider;
   readonly #model: string;
   readonly #eventLog: EventLog;
-  readonly #budget: TokenBudget;
   readonly #memory: MemoryProvider;
+  readonly #signal: AbortSignal | undefined;
+  readonly #stageBudget: TokenBudgetTracker;
+  readonly #runBudget: RunBudgetTracker | undefined;
   #retrievals: readonly Retrieval[] = [];
   #lifecycle: AgentLifecycle = "CREATED";
 
@@ -51,8 +56,10 @@ export abstract class BaseAgent implements StageAgent {
     this.#model = options.model;
     this.#eventLog = options.eventLog;
     this.toolExecutor = options.toolExecutor;
-    this.#budget = options.budget;
     this.#memory = options.memory;
+    this.#signal = options.signal;
+    this.#stageBudget = new TokenBudgetTracker(options.budget);
+    this.#runBudget = options.runBudget;
   }
 
   public get lifecycle(): AgentLifecycle {
@@ -64,13 +71,16 @@ export abstract class BaseAgent implements StageAgent {
       throw new StageFailure(`${this.id} agent instance has already run`);
     }
     this.#lifecycle = "RUNNING";
+    throwIfCancelled(this.#signal);
     await this.#eventLog.append({
       type: "stage.started",
       data: { runId: ctx.runId, stage: this.id, attempt: input.attempt },
     });
     try {
       this.#retrievals = await this.recallMemory(ctx);
+      throwIfCancelled(this.#signal);
       const result = await this.execute(input, ctx);
+      throwIfCancelled(this.#signal);
       await this.recordOutput(ctx, result);
       await this.#eventLog.append({
         type: "stage.completed",
@@ -114,9 +124,11 @@ export abstract class BaseAgent implements StageAgent {
       { role: "system", content: prompt.content },
       { role: "user", content: promptInput.content },
     ];
-    const tracker = new TokenBudgetTracker(this.#budget);
     const estimatedInput = estimateTokens(messages.map((item) => item.content).join("\n"));
-    tracker.ensureInputFits(estimatedInput);
+    this.#stageBudget.ensureInputFits(estimatedInput);
+    const maxOutputTokens = this.#stageBudget.remainingOutput;
+    this.#stageBudget.ensureOutputFits(1);
+    const runReservation = this.#runBudget?.beforeLlm(estimatedInput, maxOutputTokens);
     const promptFingerprint = createHash("sha256").update(JSON.stringify(messages)).digest("hex");
     let completion: ChatCompletion;
     const structured = supportsStructuredOutput(this.#provider);
@@ -124,11 +136,15 @@ export abstract class BaseAgent implements StageAgent {
       completion = await this.#provider.complete(messages, {
         model: this.#model,
         temperature: 0,
-        maxOutputTokens: this.#budget.output,
+        maxOutputTokens,
         seed: 42,
         ...(structured ? { structuredOutput: structuredOutputFor(this.id) } : {}),
+        ...(this.#signal === undefined ? {} : { signal: this.#signal }),
       });
     } catch (error) {
+      if (runReservation !== undefined) {
+        this.#runBudget?.failLlm(runReservation, estimatedInput);
+      }
       await this.recordLlmCall(
         ctx,
         estimatedInput,
@@ -149,8 +165,11 @@ export abstract class BaseAgent implements StageAgent {
       prompt.version,
       structured,
     );
-    tracker.consumeInput(inputTokens);
-    tracker.consumeOutput(outputTokens);
+    this.#stageBudget.consumeInput(inputTokens);
+    this.#stageBudget.consumeOutput(outputTokens);
+    if (runReservation !== undefined) {
+      this.#runBudget?.settleLlm(runReservation, inputTokens, outputTokens);
+    }
     return parseJsonObject(completion.content);
   }
 
@@ -183,6 +202,7 @@ export abstract class BaseAgent implements StageAgent {
     const retrievals = await this.#memory.recall(query, {
       scopes: ["episodic", "project", "semantic"],
       limit: 6,
+      ...(this.#signal === undefined ? {} : { signal: this.#signal }),
     });
     for (const retrieval of retrievals) {
       await this.#eventLog.append({
@@ -192,6 +212,9 @@ export abstract class BaseAgent implements StageAgent {
           stage: this.id,
           scope: retrieval.scope,
           source: retrieval.source,
+          entryId: retrieval.entryId,
+          timestamp: retrieval.timestamp,
+          confidence: retrieval.confidence,
           score: retrieval.score,
           reason: retrieval.reason,
           content: auditValue(retrieval.content, "content"),
@@ -215,6 +238,7 @@ export abstract class BaseAgent implements StageAgent {
         sections: sections.map((section) => ({
           name: section.name,
           source: section.source,
+          trust: section.trust ?? (section.source === "contract" ? "trusted" : "untrusted"),
           tokenEstimate: estimateTokens(section.content),
           references: section.references ?? [],
         })),
@@ -253,6 +277,8 @@ export abstract class BaseAgent implements StageAgent {
                 runId: ctx.runId,
                 stage: output.gate.stage,
                 evidence: output.gate.evidence,
+                artifactFingerprint: output.gate.artifactFingerprint,
+                verificationEvidence: output.gate.verificationEvidence,
                 ...(output.gate.coveragePercent === undefined
                   ? {}
                   : { coveragePercent: output.gate.coveragePercent }),
@@ -265,6 +291,8 @@ export abstract class BaseAgent implements StageAgent {
                 stage: output.gate.stage,
                 reason: output.gate.reason,
                 feedback: output.gate.feedback,
+                artifactFingerprint: output.gate.artifactFingerprint,
+                verificationEvidence: output.gate.verificationEvidence,
                 ...(output.gate.coveragePercent === undefined
                   ? {}
                   : { coveragePercent: output.gate.coveragePercent }),

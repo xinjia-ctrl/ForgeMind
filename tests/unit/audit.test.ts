@@ -55,8 +55,8 @@ describe("audit projection", () => {
       });
       const quality = result.records.find((record) => record.type === "run.quality");
       assert.ok(quality);
-      assert.equal(quality.operation, "EXCELLENT");
-      assert.equal(quality.outcome, "100");
+      assert.equal(quality.operation, "strong");
+      assert.equal(quality.outcome, "succeeded");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -177,19 +177,13 @@ async function createRun(
     data: {
       runId: options.runId,
       requirement: "Audit fixture",
-      status: options.status,
-      score: options.status === "SUCCEEDED" ? 100 : 0,
-      grade: options.status === "SUCCEEDED" ? "EXCELLENT" : "POOR",
-      gatePassRate: options.status === "SUCCEEDED" ? 100 : 0,
-      gatesPassed: options.status === "SUCCEEDED" ? 2 : 0,
-      gatesTotal: 2,
+      outcome: options.status === "SUCCEEDED" ? "succeeded" : "failed",
+      evidenceCompleteness: options.status === "SUCCEEDED" ? 100 : 0,
+      verificationStrength: options.status === "SUCCEEDED" ? "strong" : "weak",
+      coveragePercent: null,
       reworkRounds: options.status === "SUCCEEDED" ? 0 : 2,
-      testPassRate: options.status === "SUCCEEDED" ? 100 : 0,
-      testsPassed: options.status === "SUCCEEDED" ? 1 : 0,
-      testsTotal: 1,
-      codeCoveragePercent: null,
-      coverageSource: "unavailable",
-      recommendations: [],
+      policyViolations: 0,
+      confidence: options.status === "SUCCEEDED" ? 1 : 0,
     },
   });
   const events = await log.load();

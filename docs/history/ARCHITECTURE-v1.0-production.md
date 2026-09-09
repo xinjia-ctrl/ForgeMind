@@ -2,7 +2,7 @@
 
 > 迭代：v1.0（第七轮，从演示到生产可用）
 > 前置：v0.5 已实现（记忆/提示词工程 + 兼容性与并发增强，64/64 测试通过）
-> 状态：V1 DAG 内核、V2 多仓库全链路已实现；V3 Web 工作台规划中（对齐 `docs/PRD-v1.0-production.md`）
+> 状态：V1 DAG 内核、V2 多仓库全链路已实现；V3 Web 工作台规划中（对齐 `PRD-v1.0-production.md`）
 > 技术栈：TypeScript / Node，零运行时第三方依赖（Web 工作台用 Node 原生 http + SSE，不引框架）
 
 ---

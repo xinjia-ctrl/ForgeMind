@@ -1,4 +1,4 @@
-import { HardFailure, StageFailure } from "../core/errors.js";
+import { CancellationFailure, HardFailure, StageFailure } from "../core/errors.js";
 import type { EmbeddingProvider } from "./semantic-memory.js";
 
 const MAX_DIMENSION = 65_536;
@@ -46,7 +46,7 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
     this.#timeoutMs = timeoutMs;
   }
 
-  public async embed(text: string): Promise<readonly number[]> {
+  public async embed(text: string, signal?: AbortSignal): Promise<readonly number[]> {
     let response: Response;
     try {
       response = await fetch(`${this.#baseUrl}/embeddings`, {
@@ -56,9 +56,15 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
           "content-type": "application/json",
         },
         body: JSON.stringify({ model: this.#model, input: text, encoding_format: "float" }),
-        signal: AbortSignal.timeout(this.#timeoutMs),
+        signal:
+          signal === undefined
+            ? AbortSignal.timeout(this.#timeoutMs)
+            : AbortSignal.any([signal, AbortSignal.timeout(this.#timeoutMs)]),
       });
     } catch (error) {
+      if (signal?.aborted === true) {
+        throw new CancellationFailure("Embedding request cancelled", { cause: error });
+      }
       throw new StageFailure("Embedding request failed", { cause: error });
     }
 

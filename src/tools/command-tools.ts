@@ -36,8 +36,10 @@ export class RunCommandTool implements Tool {
           cwd: policy.workspaceRoot,
           timeoutMs: policy.commandTimeoutMs,
           maxBytes: policy.maxResultBytes,
+          ...(policy.signal === undefined ? {} : { signal: policy.signal }),
         },
       );
+      if (policy.signal?.aborted === true) throw policy.signal.reason;
       const succeeded = result.exitCode === 0 && result.timedOut !== true;
       return {
         ok: succeeded,

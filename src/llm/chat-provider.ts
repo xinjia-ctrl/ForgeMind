@@ -14,6 +14,7 @@ export interface ChatOptions {
     readonly name: string;
     readonly jsonSchema: Readonly<Record<string, unknown>>;
   };
+  readonly signal?: AbortSignal;
 }
 
 export interface ChatUsage {
@@ -28,5 +29,7 @@ export interface ChatCompletion {
 
 export interface ChatProvider {
   readonly supportsStructuredOutput?: boolean;
+  /** Stable, non-secret runtime identity used by recovery manifests. */
+  readonly providerId?: string;
   complete(messages: readonly ChatMessage[], options: ChatOptions): Promise<ChatCompletion>;
 }

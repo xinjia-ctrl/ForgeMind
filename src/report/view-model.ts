@@ -2,7 +2,7 @@ import type { FailureKind } from "../core/errors.js";
 import type { ForgeMindEvent } from "../core/events.js";
 import { workflowSignature, workflowTrace } from "../core/reproducibility.js";
 import { STAGES, type RunStatus, type StageId } from "../core/types.js";
-import type { CoverageSource, QualityGrade } from "../quality/types.js";
+import type { VerificationStrength } from "../quality/types.js";
 import { auditValue } from "../tools/audit.js";
 
 export const MAX_REPORT_EVENTS = 2_000;
@@ -82,6 +82,9 @@ export interface ReportMemoryEvent {
   readonly operation: "RECALLED" | "STORED";
   readonly scope: "working" | "episodic" | "project" | "semantic";
   readonly source: string;
+  readonly entryId?: string;
+  readonly memoryTimestamp?: string;
+  readonly confidence?: number;
   readonly reason?: string;
   readonly score?: number;
   readonly used?: boolean;
@@ -110,19 +113,13 @@ export interface ReportContextAssembly {
 export interface ReportQuality {
   readonly seq: number;
   readonly ts: string;
-  readonly status: RunStatus;
-  readonly score: number;
-  readonly grade: QualityGrade;
-  readonly gatePassRate: number;
-  readonly gatesPassed: number;
-  readonly gatesTotal: number;
+  readonly outcome: "succeeded" | "failed";
+  readonly evidenceCompleteness: number;
+  readonly verificationStrength: VerificationStrength;
+  readonly coveragePercent: number | null;
   readonly reworkRounds: number;
-  readonly testPassRate: number;
-  readonly testsPassed: number;
-  readonly testsTotal: number;
-  readonly codeCoveragePercent: number | null;
-  readonly coverageSource: CoverageSource;
-  readonly recommendations: readonly string[];
+  readonly policyViolations: number;
+  readonly confidence: number;
 }
 
 export interface ReportViewModel {
@@ -239,6 +236,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
           operation: "RECALLED",
           scope: event.data.scope,
           source: event.data.source,
+          entryId: event.data.entryId,
+          memoryTimestamp: event.data.timestamp,
+          confidence: event.data.confidence,
           reason: event.data.reason,
           score: event.data.score,
           used: event.data.used,
@@ -379,19 +379,13 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
         quality = {
           seq: event.seq,
           ts: event.ts,
-          status: event.data.status,
-          score: event.data.score,
-          grade: event.data.grade,
-          gatePassRate: event.data.gatePassRate,
-          gatesPassed: event.data.gatesPassed,
-          gatesTotal: event.data.gatesTotal,
+          outcome: event.data.outcome,
+          evidenceCompleteness: event.data.evidenceCompleteness,
+          verificationStrength: event.data.verificationStrength,
+          coveragePercent: event.data.coveragePercent,
           reworkRounds: event.data.reworkRounds,
-          testPassRate: event.data.testPassRate,
-          testsPassed: event.data.testsPassed,
-          testsTotal: event.data.testsTotal,
-          codeCoveragePercent: event.data.codeCoveragePercent,
-          coverageSource: event.data.coverageSource,
-          recommendations: event.data.recommendations,
+          policyViolations: event.data.policyViolations,
+          confidence: event.data.confidence,
         };
         break;
     }
@@ -550,6 +544,8 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "stage.completed":
     case "stage.failed":
       return event.data.stage;
+    case "run.resumed":
+      return event.data.phase;
     case "run.started":
     case "development.received":
     case "trigger.decided":
@@ -654,6 +650,8 @@ function eventSummary(event: ForgeMindEvent): string {
       return `Negotiation ${event.data.reason}: ${event.data.approved ? "approved" : "denied"}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
+    case "run.resumed":
+      return `Run resumed at ${event.data.phase} attempt ${event.data.attempt}`;
     case "task.started":
       return `Task ${event.data.taskId} started as ${event.data.childRunId}`;
     case "task.completed":
@@ -691,7 +689,7 @@ function eventSummary(event: ForgeMindEvent): string {
     case "run.finished":
       return `${event.data.status}: ${event.data.summary}`;
     case "run.quality":
-      return `Quality ${event.data.grade}: ${event.data.score}/100`;
+      return `Quality ${event.data.outcome}: ${event.data.verificationStrength} verification, ${event.data.evidenceCompleteness}% evidence`;
   }
 }
 

@@ -29,6 +29,26 @@ export class FatalFailure extends ForgeMindError {
   }
 }
 
+export class CancellationFailure extends ForgeMindError {
+  public constructor(message = "Run cancelled", options?: ErrorOptions) {
+    super(message, "HARD", options);
+  }
+}
+
+export function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) {
+    throw new CancellationFailure("Run cancelled", { cause: signal.reason });
+  }
+}
+
+export function isCancellation(error: unknown): boolean {
+  return (
+    error instanceof CancellationFailure ||
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
 export function classifyFailure(error: unknown): FailureKind {
   return error instanceof ForgeMindError ? error.kind : "FATAL";
 }

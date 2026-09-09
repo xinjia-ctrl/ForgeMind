@@ -3,34 +3,38 @@ import type { ArtifactRef, StageInput, StageOutput, TaskContext } from "../core/
 import type { ToolResult } from "../tools/types.js";
 import type { BaseAgentOptions } from "./base-agent.js";
 import { BaseAgent } from "./base-agent.js";
-import { diffFingerprint } from "./review-agent.js";
+import { assertAcceptanceSatisfied } from "../core/acceptance.js";
+import { workspaceFingerprint } from "../core/workspace-fingerprint.js";
 
 export const COMMIT_TOOLS = ["git_status", "git_diff", "git_commit"] as const;
 
-export class CommitAgent extends BaseAgent {
+/** Deterministic, policy-governed Git side-effect executor. */
+export class CommitExecutor extends BaseAgent {
   public constructor(options: Omit<BaseAgentOptions, "id" | "tools">) {
     super({ ...options, id: "COMMIT", tools: COMMIT_TOOLS });
   }
 
   protected async execute(_input: StageInput, ctx: TaskContext): Promise<StageOutput> {
+    assertAcceptanceSatisfied(ctx);
     const review = [...ctx.gates].reverse().find((gate) => gate.stage === "REVIEW");
     const test = [...ctx.gates].reverse().find((gate) => gate.stage === "TEST");
     if (review?.passed !== true || test?.passed !== true) {
       throw new StageFailure("COMMIT requires passing REVIEW and TEST gates");
     }
-    const reviewedFingerprint = /^diff-sha256:([a-f0-9]{64});/.exec(review.evidence)?.[1];
-    if (reviewedFingerprint === undefined) {
-      throw new StageFailure("REVIEW evidence is missing the diff fingerprint");
+    const reviewedFingerprint = review.artifactFingerprint;
+    const testedFingerprint = test.artifactFingerprint;
+    if (reviewedFingerprint !== testedFingerprint) {
+      throw new StageFailure("REVIEW and TEST evidence refer to different workspace versions");
     }
     const currentDiff = extractDiff(await this.requireTool("git_diff", {}));
-    if (diffFingerprint(currentDiff) !== reviewedFingerprint) {
+    if (workspaceFingerprint(currentDiff) !== reviewedFingerprint) {
       throw new StageFailure(
         "Workspace changed after review; a new review and test cycle is required",
       );
     }
     const objective = ctx.plan?.objective ?? ctx.requirement;
     const message = `feat: ${objective.replace(/\s+/g, " ").slice(0, 72)}`;
-    const result = await this.requireTool("git_commit", { message });
+    const result = await this.requireTool("git_commit", { message, idempotencyKey: ctx.runId });
     const commit = extractCommit(result);
     const artifact: ArtifactRef = {
       path: commit,

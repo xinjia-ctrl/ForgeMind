@@ -1,8 +1,9 @@
 import type { ForgeMindEvent } from "../core/events.js";
-import type { RunStatus } from "../core/types.js";
-import type { QualityGrade, RunQualityMetrics } from "./types.js";
+import type { RunQuality, VerificationStrength } from "./types.js";
 
-export function evaluateRunQuality(events: readonly ForgeMindEvent[]): RunQualityMetrics {
+type GateEvent = Extract<ForgeMindEvent, { readonly type: "gate.passed" | "gate.rejected" }>;
+
+export function evaluateRunQuality(events: readonly ForgeMindEvent[]): RunQuality {
   const ordered = [...events].sort((left, right) => left.seq - right.seq);
   const finished = [...ordered].reverse().find((event) => event.type === "run.finished");
   const started = ordered.find((event) => event.type === "run.started");
@@ -10,60 +11,78 @@ export function evaluateRunQuality(events: readonly ForgeMindEvent[]): RunQualit
     throw new Error("Run quality requires a run.finished event");
   }
   const gates = ordered.filter(
-    (event) => event.type === "gate.passed" || event.type === "gate.rejected",
+    (event): event is GateEvent => event.type === "gate.passed" || event.type === "gate.rejected",
   );
-  const tests = gates.filter((event) => event.data.stage === "TEST");
-  const gatesPassed = gates.filter((event) => event.type === "gate.passed").length;
-  const testsPassed = tests.filter((event) => event.type === "gate.passed").length;
-  const reworkRounds = gates.filter((event) => event.type === "gate.rejected").length;
-  const gatePassRate = percentage(gatesPassed, gates.length);
-  const testPassRate = percentage(testsPassed, tests.length);
-  const codeCoveragePercent = latestCoverage(tests);
-  const coverageScore = codeCoveragePercent ?? testPassRate;
-  const score = clamp(
-    Math.round(
-      gatePassRate * 0.4 +
-        coverageScore * 0.5 +
-        (finished.data.status === "SUCCEEDED" ? 10 : 0) -
-        Math.min(20, reworkRounds * 5),
-    ),
-    0,
-    100,
+  const latestTest = latestGate(gates, "TEST");
+  const latestReview = latestGate(gates, "REVIEW");
+  const evidenceCompleteness = round(
+    (stageEvidenceCompleteness(latestTest) + stageEvidenceCompleteness(latestReview)) / 2,
+    2,
   );
+  const fingerprintsMatch =
+    latestTest !== undefined &&
+    latestReview !== undefined &&
+    latestTest.data.artifactFingerprint === latestReview.data.artifactFingerprint;
+  const verificationStrength = strengthFor(latestTest, latestReview, fingerprintsMatch);
+  const outcome = finished.data.status === "SUCCEEDED" ? "succeeded" : "failed";
+  const coveragePercent = latestCoverage(gates.filter((gate) => gate.data.stage === "TEST"));
+  const reworkRounds = gates.filter((gate) => gate.type === "gate.rejected").length;
+  const policyViolations = ordered.filter((event) => event.type === "approval.rejected").length;
+  const confidence = confidenceFor({
+    outcome,
+    evidenceCompleteness,
+    verificationStrength,
+    fingerprintsMatch,
+    policyViolations,
+  });
   return {
     runId: finished.data.runId,
     requirement: started?.type === "run.started" ? started.data.requirement : "",
-    status: finished.data.status,
-    score,
-    grade: gradeFor(score),
-    gatePassRate,
-    gatesPassed,
-    gatesTotal: gates.length,
+    outcome,
+    evidenceCompleteness,
+    verificationStrength,
+    coveragePercent,
     reworkRounds,
-    testPassRate,
-    testsPassed,
-    testsTotal: tests.length,
-    codeCoveragePercent,
-    coverageSource: codeCoveragePercent === null ? "unavailable" : "test-output",
-    recommendations: recommendationsFor({
-      status: finished.data.status,
-      gatePassRate,
-      gatesTotal: gates.length,
-      reworkRounds,
-      testPassRate,
-      testsTotal: tests.length,
-      codeCoveragePercent,
-    }),
+    policyViolations,
+    confidence,
   };
 }
 
-function percentage(passed: number, total: number): number {
-  return total === 0 ? 0 : Math.round((passed / total) * 10_000) / 100;
+function latestGate(gates: readonly GateEvent[], stage: "TEST" | "REVIEW"): GateEvent | undefined {
+  return [...gates].reverse().find((gate) => gate.data.stage === stage);
 }
 
-function latestCoverage(
-  tests: readonly Extract<ForgeMindEvent, { readonly type: "gate.passed" | "gate.rejected" }>[],
-): number | null {
+function stageEvidenceCompleteness(gate: GateEvent | undefined): number {
+  if (gate === undefined) return 0;
+  const evidence = gate.data.verificationEvidence;
+  if (evidence.length === 0) return gate.type === "gate.passed" ? 100 : 0;
+  const passed = evidence.filter(
+    (item) =>
+      item.passed &&
+      item.details.trim().length > 0 &&
+      item.artifactFingerprint === gate.data.artifactFingerprint,
+  ).length;
+  return (passed / evidence.length) * 100;
+}
+
+function strengthFor(
+  test: GateEvent | undefined,
+  review: GateEvent | undefined,
+  fingerprintsMatch: boolean,
+): VerificationStrength {
+  if (test?.type !== "gate.passed" || review?.type !== "gate.passed" || !fingerprintsMatch) {
+    return "weak";
+  }
+  const specificBehavior = test.data.verificationEvidence.some((item) =>
+    ["test-case", "file", "behavior"].includes(item.verifierKind),
+  );
+  const independentReview = review.data.verificationEvidence.some((item) =>
+    item.source.startsWith("review:"),
+  );
+  return specificBehavior && independentReview ? "strong" : "moderate";
+}
+
+function latestCoverage(tests: readonly GateEvent[]): number | null {
   for (let index = tests.length - 1; index >= 0; index -= 1) {
     const coverage = tests[index]?.data.coveragePercent;
     if (coverage !== undefined) return coverage;
@@ -71,51 +90,27 @@ function latestCoverage(
   return null;
 }
 
-function gradeFor(score: number): QualityGrade {
-  if (score >= 90) return "EXCELLENT";
-  if (score >= 75) return "GOOD";
-  if (score >= 50) return "NEEDS_ATTENTION";
-  return "POOR";
+function confidenceFor(input: {
+  readonly outcome: "succeeded" | "failed";
+  readonly evidenceCompleteness: number;
+  readonly verificationStrength: VerificationStrength;
+  readonly fingerprintsMatch: boolean;
+  readonly policyViolations: number;
+}): number {
+  const strength =
+    input.verificationStrength === "strong"
+      ? 0.2
+      : input.verificationStrength === "moderate"
+        ? 0.12
+        : 0;
+  let confidence = (input.evidenceCompleteness / 100) * 0.65 + strength;
+  if (input.outcome === "succeeded") confidence += 0.15;
+  if (!input.fingerprintsMatch) confidence = Math.min(confidence, 0.49);
+  if (input.policyViolations > 0) confidence = Math.min(confidence, 0.69);
+  return round(Math.max(0, Math.min(1, confidence)), 3);
 }
 
-function recommendationsFor(input: {
-  readonly status: RunStatus;
-  readonly gatePassRate: number;
-  readonly gatesTotal: number;
-  readonly reworkRounds: number;
-  readonly testPassRate: number;
-  readonly testsTotal: number;
-  readonly codeCoveragePercent: number | null;
-}): readonly string[] {
-  const recommendations: string[] = [];
-  if (input.status !== "SUCCEEDED") {
-    recommendations.push("Resolve the recorded run failure before reusing this implementation.");
-  }
-  if (input.gatesTotal === 0) {
-    recommendations.push("Ensure the run reaches REVIEW and TEST quality gates.");
-  } else if (input.gatePassRate < 100) {
-    recommendations.push("Use rejected gate feedback to reduce repeat review and test defects.");
-  }
-  if (input.reworkRounds > 0) {
-    recommendations.push(
-      `Address recurring gate feedback earlier; this run required ${input.reworkRounds} rework round${input.reworkRounds === 1 ? "" : "s"}.`,
-    );
-  }
-  if (input.testsTotal === 0) {
-    recommendations.push("Add or restore a TEST gate before considering the change complete.");
-  } else if (input.testPassRate < 100) {
-    recommendations.push("Stabilize the configured test command and its failing scenarios.");
-  }
-  if (input.codeCoveragePercent === null) {
-    recommendations.push(
-      "Emit FORGEMIND_COVERAGE=<0-100> from the test command to audit code coverage.",
-    );
-  } else if (input.codeCoveragePercent < 80) {
-    recommendations.push("Increase code coverage for changed behavior to at least 80%.");
-  }
-  return recommendations;
-}
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
+function round(value: number, digits: number): number {
+  const multiplier = 10 ** digits;
+  return Math.round(value * multiplier) / multiplier;
 }

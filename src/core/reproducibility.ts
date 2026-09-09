@@ -52,6 +52,13 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
           };
         case "run.started":
           return { type: event.type };
+        case "run.resumed":
+          return {
+            type: event.type,
+            stage: event.data.phase,
+            attempt: event.data.attempt,
+            outcome: "resumed",
+          };
         case "task.started":
           return {
             type: event.type,
@@ -166,8 +173,8 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
         case "run.quality":
           return {
             type: event.type,
-            operation: event.data.grade,
-            outcome: String(event.data.score),
+            operation: event.data.verificationStrength,
+            outcome: event.data.outcome,
           };
       }
     });

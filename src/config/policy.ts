@@ -15,6 +15,7 @@ export interface LoadPolicyConfigOptions {
   readonly repositoryRoot: string;
   readonly explicitPath?: string;
   readonly testCommand: readonly string[];
+  readonly verificationCommands?: readonly (readonly string[])[];
   readonly environment?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -38,7 +39,9 @@ export async function loadPolicyConfig(
   options: LoadPolicyConfigOptions,
 ): Promise<ForgeMindPolicyConfig> {
   const environment = options.environment ?? process.env;
-  const layers: PolicyConfigLayer[] = [builtInPolicy(options.testCommand)];
+  const layers: PolicyConfigLayer[] = [
+    builtInPolicy(options.testCommand, options.verificationCommands ?? []),
+  ];
   const globalPath = environment["FORGEMIND_GLOBAL_CONFIG"];
   if (globalPath !== undefined && globalPath.trim().length > 0) {
     layers.push(await readConfigFile(globalPath, true));
@@ -69,7 +72,10 @@ export function mergePolicyLayers(layers: readonly PolicyConfigLayer[]): ForgeMi
   return { defaultMode, rules, sandbox };
 }
 
-function builtInPolicy(testCommand: readonly string[]): PolicyConfigLayer {
+function builtInPolicy(
+  testCommand: readonly string[],
+  verificationCommands: readonly (readonly string[])[],
+): PolicyConfigLayer {
   return {
     defaultMode: "deny",
     rules: [
@@ -79,6 +85,16 @@ function builtInPolicy(testCommand: readonly string[]): PolicyConfigLayer {
         match: { stage: "TEST", tool: "run_command", command: testCommand },
         mode: "allow",
       },
+      {
+        match: { stage: "CODE", tool: "run_command", command: testCommand },
+        mode: "allow",
+      },
+      ...verificationCommands
+        .filter((command) => !sameCommand(command, testCommand))
+        .map((command): PolicyRule => ({
+          match: { stage: "TEST", tool: "run_command", command },
+          mode: "allow",
+        })),
       { match: { stage: "COMMIT", tool: "git_commit" }, mode: "approve", risk: "high" },
     ],
     sandbox: {
@@ -90,6 +106,10 @@ function builtInPolicy(testCommand: readonly string[]): PolicyConfigLayer {
       network: false,
     },
   };
+}
+
+function sameCommand(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index]);
 }
 
 async function readConfigFile(filePath: string, required: boolean): Promise<PolicyConfigLayer> {

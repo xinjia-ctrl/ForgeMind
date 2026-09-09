@@ -1,4 +1,6 @@
 import type { ArtifactRef, GateResult, TaskContext } from "../core/types.js";
+import { createHash } from "node:crypto";
+import { throwIfCancelled } from "../core/errors.js";
 import type { DecisionRecord } from "../negotiation/types.js";
 import type { RunQualityMetrics } from "../quality/types.js";
 import {
@@ -48,6 +50,7 @@ export class LayeredMemory implements MemoryProvider {
   }
 
   public async recall(query: string, options: RecallOptions = {}): Promise<readonly Retrieval[]> {
+    throwIfCancelled(options.signal);
     const scopes = options.scopes ?? MEMORY_SCOPES;
     const results = await Promise.all(
       scopes.map(async (scope) => {
@@ -57,11 +60,23 @@ export class LayeredMemory implements MemoryProvider {
       }),
     );
     const limit = options.limit ?? this.#defaultLimit;
-    return results
+    throwIfCancelled(options.signal);
+    const ordered = results
       .flat()
       .filter((item) => scopes.includes(item.scope))
-      .sort((left, right) => right.score - left.score || left.source.localeCompare(right.source))
-      .slice(0, limit);
+      .sort((left, right) => right.score - left.score || left.source.localeCompare(right.source));
+    const deduplicated: Retrieval[] = [];
+    const entryIds = new Set<string>();
+    const contentHashes = new Set<string>();
+    for (const item of ordered) {
+      const entryId = item.entryId.trim();
+      const contentHash = createHash("sha256").update(item.content).digest("hex");
+      if ((entryId.length > 0 && entryIds.has(entryId)) || contentHashes.has(contentHash)) continue;
+      if (entryId.length > 0) entryIds.add(entryId);
+      contentHashes.add(contentHash);
+      deduplicated.push(item);
+    }
+    return deduplicated.slice(0, limit);
   }
 
   private providers(): readonly MemoryProvider[] {
