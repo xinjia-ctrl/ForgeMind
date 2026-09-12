@@ -1,105 +1,24 @@
-import type { RiskLevel, Role } from "../auth/types.js";
+import type { RiskLevel } from "../policy/types.js";
 import type { VerificationStrength } from "../quality/types.js";
 import type { RunStatus, StageId, StageStatus } from "./types.js";
 
-interface ActorIndex {
-  readonly actor?: string;
-  readonly role?: Role;
+interface ApprovalIndex {
   readonly risk?: RiskLevel;
 }
 
-interface EventIndex {
-  readonly taskId?: string;
-}
-
 interface EventPayloadMap {
-  readonly "development.received": {
-    readonly runId: string;
-    readonly actor: "agentic";
-    readonly eventId: string;
-    readonly source: "github" | "jira" | "ci" | "forgemind";
-    readonly developmentType:
-      "issue.updated" | "issue.assigned" | "ci.failed" | "pr.mentioned" | "approval.timed_out";
-    readonly repo: string;
-    readonly objectKind: "issue" | "pull_request" | "workflow" | "approval";
-    readonly objectId: string;
-    readonly occurredAt: string;
-  };
-  readonly "trigger.decided": {
-    readonly runId: string;
-    readonly actor: "agentic";
-    readonly eventId: string;
-    readonly repo: string;
-    readonly decision: "TRIGGER" | "IGNORE" | "MERGE" | "DEFER";
-    readonly reason: string;
-    readonly ruleId?: string;
-    readonly requestId?: string;
-    readonly retryAt?: string;
-  };
-  readonly "negotiation.started": {
-    readonly runId: string;
-    readonly negotiationId: string;
-    readonly trigger: "arch-conflict" | "review-repeated-rejection" | "artifact-mismatch";
-    readonly topic: string;
-  };
-  readonly "negotiation.round": {
-    readonly runId: string;
-    readonly negotiationId: string;
-    readonly round: 1 | 2 | 3;
-    readonly status: "CONTINUE" | "CONVERGED";
-    readonly proposal: unknown;
-    readonly counter: unknown;
-  };
-  readonly "negotiation.resolved": {
-    readonly runId: string;
-    readonly negotiationId: string;
-    readonly decisionRecordId: string;
-    readonly decision: unknown;
-  };
-  readonly "negotiation.escalated": {
-    readonly runId: string;
-    readonly negotiationId: string;
-    readonly reason: "no-consensus" | "timeout";
-    readonly approved: boolean;
-  };
   readonly "run.started": {
     readonly runId: string;
     readonly requirement: string;
     readonly branch: string;
     readonly repo?: string;
-    readonly parentRunId?: string;
-    readonly actor?: string;
-    readonly profile?: "light" | "standard" | "dag";
+    readonly profile?: "light" | "standard";
     readonly profileReason?: string;
   };
   readonly "run.resumed": {
     readonly runId: string;
     readonly phase: StageId;
     readonly attempt: number;
-  };
-  readonly "task.started": {
-    readonly runId: string;
-    readonly taskId: string;
-    readonly childRunId: string;
-    readonly repo: string;
-    readonly requirement: string;
-  };
-  readonly "task.completed": {
-    readonly runId: string;
-    readonly taskId: string;
-    readonly childRunId: string;
-    readonly repo: string;
-    readonly branch: string;
-    readonly status: "SUCCEEDED";
-    readonly summary: string;
-  };
-  readonly "task.failed": {
-    readonly runId: string;
-    readonly taskId: string;
-    readonly childRunId: string;
-    readonly repo: string;
-    readonly status: "FAILED" | "BLOCKED";
-    readonly error: string;
   };
   readonly "stage.started": {
     readonly runId: string;
@@ -115,28 +34,6 @@ interface EventPayloadMap {
     readonly promptFingerprint: string;
     readonly promptVersion?: string;
     readonly structuredOutput?: boolean;
-    readonly negotiationId?: string;
-    readonly negotiationSide?: "proposal" | "counter";
-  };
-  readonly "memory.recalled": {
-    readonly runId: string;
-    readonly stage: StageId;
-    readonly scope: "working" | "episodic" | "project" | "semantic";
-    readonly source: string;
-    readonly entryId: string;
-    readonly timestamp: string;
-    readonly confidence: number;
-    readonly score: number;
-    readonly reason: string;
-    readonly content: unknown;
-    readonly used: boolean;
-  };
-  readonly "memory.stored": {
-    readonly runId: string;
-    readonly stage: StageId;
-    readonly scope: "working" | "episodic" | "project" | "semantic";
-    readonly kind: string;
-    readonly path: string;
   };
   readonly "context.assembled": {
     readonly runId: string;
@@ -165,7 +62,7 @@ interface EventPayloadMap {
     readonly action: unknown;
     readonly policy: string;
     readonly mode: "approve";
-  } & ActorIndex;
+  } & ApprovalIndex;
   readonly "approval.approved": {
     readonly runId: string;
     readonly stage: StageId;
@@ -173,8 +70,8 @@ interface EventPayloadMap {
     readonly action: unknown;
     readonly policy: string;
     readonly mode: "approve";
-    readonly decisionSource: "interactive" | "auto" | "config";
-  } & ActorIndex;
+    readonly decisionSource: "interactive" | "auto";
+  } & ApprovalIndex;
   readonly "approval.rejected": {
     readonly runId: string;
     readonly stage: StageId;
@@ -184,7 +81,7 @@ interface EventPayloadMap {
     readonly mode: "approve" | "deny";
     readonly reason: string;
     readonly decisionSource: "interactive" | "auto" | "disabled" | "policy";
-  } & ActorIndex;
+  } & ApprovalIndex;
   readonly "artifact.produced": {
     readonly runId: string;
     readonly stage: StageId;
@@ -254,7 +151,7 @@ interface EventPayloadMap {
 }
 
 export type EventDataMap = {
-  readonly [K in keyof EventPayloadMap]: EventPayloadMap[K] & EventIndex;
+  readonly [K in keyof EventPayloadMap]: EventPayloadMap[K];
 };
 
 export type EventType = keyof EventDataMap;

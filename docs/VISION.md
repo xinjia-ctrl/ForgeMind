@@ -1,50 +1,12 @@
-# ForgeMind Vision
+# 演进原则
 
-> Status: current direction, not a promise of deployment readiness or a feature roadmap.
+ForgeMind 的目标是把一个可解释的 AI 编码闭环做扎实，而不是堆叠平台功能。
 
-## One-sentence direction
+后续优先级：
 
-Make coding-agent work inspectable and verifiable: people define intent and approve risk, while a bounded workflow performs implementation and collects evidence.
+1. 提高真实任务成功率和验收证据质量。
+2. 降低模型调用、上下文和返工成本。
+3. 改善中断恢复、错误说明和本地使用体验。
+4. 用更多供应商和仓库类型验证兼容性。
 
-## Product thesis
-
-ForgeMind is built around three questions:
-
-1. What information can each model role observe?
-2. What actions can it perform, under which policy?
-3. What external evidence proves that the requested outcome was achieved?
-
-The project therefore favors a deterministic workflow over an open-ended society of agents. PLAN, optional ARCH, CODE, and REVIEW provide specialized model judgments; TEST and COMMIT remain deterministic gates. Multi-repository concurrency is used only when tasks can be isolated in separate worktrees.
-
-## Current product boundary
-
-The current repository is a local reference implementation with:
-
-- one natural-language requirement to one verified commit;
-- bounded rework, cancellation, checkpoints, and action recovery;
-- evidence-bound TEST and REVIEW gates;
-- branch/worktree isolation, policy, approvals, and audit events;
-- optional DAG execution, governed memory, and external-service adapters;
-- a loopback-only Web workspace and an offline report.
-
-It is not a hosted cloud product, a multi-user collaboration service, a general replacement for an IDE, or an automatic merge/deployment system. External webhook hosting, secret management, repository mapping, operational alerting, and ambiguous-run reconciliation remain host responsibilities.
-
-## Near-term priorities
-
-Until the evidence below is stronger, new integrations and new Agent roles are not priorities:
-
-1. Expand real-agent evaluation from controlled toy repositories to representative small projects.
-2. Add repeat runs, multiple providers, latency/cost statistics, and controlled ablations.
-3. Publish a short reproducible demo with a sanitized report and failure-recovery case study.
-4. Keep the public documentation, package metadata, and release history synchronized with the code.
-
-## North-star evidence
-
-- end-to-end task success backed by criterion-level verifiers;
-- first-pass success and recovery success after a failed gate;
-- unauthorized and repeated tool-call rates;
-- human-approval rate for risky actions;
-- median and tail latency, model calls, tokens, and cost;
-- reproducibility of workflow decisions under the same controlled inputs.
-
-Historical product plans and architecture snapshots are retained under [`docs/history/`](history/README.md); they describe the evolution of the project, not its current readiness level.
+新增能力必须满足三个条件：有代表性评测证明收益；不会绕过现有策略与门禁；其复杂度能够被当前维护者清楚解释。多仓库编排、外部平台接入和长期记忆只有在真实需求与证据出现后才重新评估。

@@ -1,12 +1,11 @@
 import type { ActionRequest } from "./types.js";
-import type { ApprovalContext } from "../auth/types.js";
 
 export type ApprovalDecision = "APPROVED" | "DENIED";
 export type ApprovalSource = "interactive" | "auto" | "disabled";
 
 export interface ApprovalGateway {
   readonly source: ApprovalSource;
-  request(action: ActionRequest, context?: ApprovalContext): Promise<ApprovalDecision>;
+  request(action: ActionRequest): Promise<ApprovalDecision>;
 }
 
 export class DenyApprovalGateway implements ApprovalGateway {

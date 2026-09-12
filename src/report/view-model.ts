@@ -69,25 +69,8 @@ export interface ReportSecurityEvent {
   readonly policy: string;
   readonly source?: string;
   readonly reason?: string;
-  readonly actor?: string;
-  readonly role?: string;
   readonly risk?: string;
   readonly details?: unknown;
-}
-
-export interface ReportMemoryEvent {
-  readonly seq: number;
-  readonly ts: string;
-  readonly stage: StageId;
-  readonly operation: "RECALLED" | "STORED";
-  readonly scope: "working" | "episodic" | "project" | "semantic";
-  readonly source: string;
-  readonly entryId?: string;
-  readonly memoryTimestamp?: string;
-  readonly confidence?: number;
-  readonly reason?: string;
-  readonly score?: number;
-  readonly used?: boolean;
 }
 
 export interface ReportPromptVersion {
@@ -140,7 +123,6 @@ export interface ReportViewModel {
   };
   readonly artifacts: readonly ReportArtifact[];
   readonly security: readonly ReportSecurityEvent[];
-  readonly memory: readonly ReportMemoryEvent[];
   readonly prompts: readonly ReportPromptVersion[];
   readonly contexts: readonly ReportContextAssembly[];
   readonly quality: ReportQuality | null;
@@ -171,7 +153,6 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
   const gates: ReportGate[] = [];
   const artifacts: ReportArtifact[] = [];
   const security: ReportSecurityEvent[] = [];
-  const memory: ReportMemoryEvent[] = [];
   const prompts: ReportPromptVersion[] = [];
   const contexts: ReportContextAssembly[] = [];
   const timeline: ReportTimelineEvent[] = [];
@@ -196,20 +177,9 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
     );
 
     switch (event.type) {
-      case "development.received":
-      case "trigger.decided":
-      case "negotiation.started":
-      case "negotiation.round":
-      case "negotiation.resolved":
-      case "negotiation.escalated":
-        break;
       case "run.started":
         requirement = event.data.requirement;
         runStartedAt = timestamp(event.ts);
-        break;
-      case "task.started":
-      case "task.completed":
-      case "task.failed":
         break;
       case "stage.started":
         openStarts.set(event.data.stage, timestamp(event.ts));
@@ -228,32 +198,6 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
         });
         break;
       }
-      case "memory.recalled":
-        memory.push({
-          seq: event.seq,
-          ts: event.ts,
-          stage: event.data.stage,
-          operation: "RECALLED",
-          scope: event.data.scope,
-          source: event.data.source,
-          entryId: event.data.entryId,
-          memoryTimestamp: event.data.timestamp,
-          confidence: event.data.confidence,
-          reason: event.data.reason,
-          score: event.data.score,
-          used: event.data.used,
-        });
-        break;
-      case "memory.stored":
-        memory.push({
-          seq: event.seq,
-          ts: event.ts,
-          stage: event.data.stage,
-          operation: "STORED",
-          scope: event.data.scope,
-          source: event.data.path,
-        });
-        break;
       case "context.assembled":
         contexts.push({
           seq: event.seq,
@@ -286,8 +230,6 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
           mode: event.data.mode,
           decision: "REQUESTED",
           policy: event.data.policy,
-          ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
-          ...(event.data.role === undefined ? {} : { role: event.data.role }),
           ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
           details: auditValue(event.data.action),
         });
@@ -302,8 +244,6 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
           decision: "APPROVED",
           policy: event.data.policy,
           source: event.data.decisionSource,
-          ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
-          ...(event.data.role === undefined ? {} : { role: event.data.role }),
           ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
           details: auditValue(event.data.action),
         });
@@ -319,8 +259,6 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
           policy: event.data.policy,
           source: event.data.decisionSource,
           reason: event.data.reason,
-          ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
-          ...(event.data.role === undefined ? {} : { role: event.data.role }),
           ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
           details: auditValue(event.data.action),
         });
@@ -433,7 +371,6 @@ export function buildReportViewModel(events: readonly ForgeMindEvent[]): ReportV
     },
     artifacts,
     security,
-    memory,
     prompts,
     contexts,
     quality,
@@ -532,8 +469,6 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "stage.started":
     case "llm.called":
     case "tool.called":
-    case "memory.recalled":
-    case "memory.stored":
     case "context.assembled":
     case "approval.requested":
     case "approval.approved":
@@ -547,15 +482,6 @@ function eventStage(event: ForgeMindEvent): StageId | null {
     case "run.resumed":
       return event.data.phase;
     case "run.started":
-    case "development.received":
-    case "trigger.decided":
-    case "negotiation.started":
-    case "negotiation.round":
-    case "negotiation.resolved":
-    case "negotiation.escalated":
-    case "task.started":
-    case "task.completed":
-    case "task.failed":
     case "run.finished":
     case "run.quality":
       return null;
@@ -583,15 +509,7 @@ function normalizeEvent(
 }
 
 function eventDetails(event: ForgeMindEvent): unknown {
-  if (
-    event.type === "development.received" ||
-    event.type === "trigger.decided" ||
-    event.type === "negotiation.started" ||
-    event.type === "negotiation.round" ||
-    event.type === "negotiation.resolved" ||
-    event.type === "negotiation.escalated" ||
-    event.type === "run.quality"
-  ) {
+  if (event.type === "run.quality") {
     return event.data;
   }
   if (event.type === "tool.called") {
@@ -609,23 +527,8 @@ function eventDetails(event: ForgeMindEvent): unknown {
     return {
       action: auditValue(event.data.action),
       policy: event.data.policy,
-      ...(event.data.actor === undefined ? {} : { actor: event.data.actor }),
-      ...(event.data.role === undefined ? {} : { role: event.data.role }),
       ...(event.data.risk === undefined ? {} : { risk: event.data.risk }),
     };
-  }
-  if (event.type === "memory.recalled") {
-    return {
-      scope: event.data.scope,
-      source: event.data.source,
-      score: event.data.score,
-      reason: event.data.reason,
-      used: event.data.used,
-      content: auditValue(event.data.content, "content"),
-    };
-  }
-  if (event.type === "memory.stored") {
-    return { scope: event.data.scope, kind: event.data.kind, path: event.data.path };
   }
   if (event.type === "context.assembled") return event.data;
   if (event.type === "stage.failed" && event.data.stack !== undefined) {
@@ -636,36 +539,14 @@ function eventDetails(event: ForgeMindEvent): unknown {
 
 function eventSummary(event: ForgeMindEvent): string {
   switch (event.type) {
-    case "development.received":
-      return `Received ${event.data.developmentType} for ${event.data.objectKind} ${event.data.objectId}`;
-    case "trigger.decided":
-      return `${event.data.decision}: ${event.data.reason}`;
-    case "negotiation.started":
-      return `Negotiation started: ${event.data.trigger}`;
-    case "negotiation.round":
-      return `Negotiation round ${event.data.round}: ${event.data.status}`;
-    case "negotiation.resolved":
-      return `Negotiation resolved: ${event.data.decisionRecordId}`;
-    case "negotiation.escalated":
-      return `Negotiation ${event.data.reason}: ${event.data.approved ? "approved" : "denied"}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
     case "run.resumed":
       return `Run resumed at ${event.data.phase} attempt ${event.data.attempt}`;
-    case "task.started":
-      return `Task ${event.data.taskId} started as ${event.data.childRunId}`;
-    case "task.completed":
-      return `Task ${event.data.taskId} succeeded on ${event.data.branch}`;
-    case "task.failed":
-      return `Task ${event.data.taskId} ${event.data.status.toLocaleLowerCase()}: ${event.data.error}`;
     case "stage.started":
       return `Attempt ${event.data.attempt} started`;
     case "llm.called":
       return `${event.data.model}: ${event.data.inputTokens} input / ${event.data.outputTokens} output tokens`;
-    case "memory.recalled":
-      return `${event.data.used ? "Used" : "Skipped"} ${event.data.scope} memory from ${event.data.source}`;
-    case "memory.stored":
-      return `Stored ${event.data.scope} ${event.data.kind}: ${event.data.path}`;
     case "context.assembled":
       return `Assembled ${event.data.sections.length} context sections (${event.data.tokenEstimate} estimated tokens)`;
     case "tool.called":
@@ -723,15 +604,10 @@ function isCritical(event: ReportTimelineEvent): boolean {
     event.type === "run.started" ||
     event.type === "run.finished" ||
     event.type === "run.quality" ||
-    event.type === "task.started" ||
-    event.type === "task.completed" ||
-    event.type === "task.failed" ||
     event.type === "stage.failed" ||
     event.type === "approval.requested" ||
     event.type === "approval.approved" ||
     event.type === "approval.rejected" ||
-    event.type === "negotiation.resolved" ||
-    event.type === "negotiation.escalated" ||
     event.type === "gate.rejected" ||
     event.type === "gate.passed" ||
     (event.type === "tool.called" && event.outcome === "failed")

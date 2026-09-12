@@ -16,9 +16,7 @@ import type {
 import { assemblePromptInput, type ContextSection } from "../context/assembler.js";
 import type { ChatCompletion, ChatMessage, ChatProvider } from "../llm/chat-provider.js";
 import { supportsStructuredOutput } from "../llm/capabilities.js";
-import type { MemoryProvider, Retrieval } from "../memory/memory-provider.js";
 import { loadPrompt, structuredOutputFor } from "../prompts/index.js";
-import { auditValue } from "../tools/audit.js";
 import type { ScopedToolExecutor } from "../tools/executor.js";
 import type { ToolResult } from "../tools/types.js";
 
@@ -30,7 +28,6 @@ export interface BaseAgentOptions {
   readonly eventLog: EventLog;
   readonly toolExecutor: ScopedToolExecutor;
   readonly budget: TokenBudget;
-  readonly memory: MemoryProvider;
   readonly signal?: AbortSignal;
   readonly runBudget?: RunBudgetTracker;
 }
@@ -42,11 +39,9 @@ export abstract class BaseAgent implements StageAgent {
   readonly #provider: ChatProvider;
   readonly #model: string;
   readonly #eventLog: EventLog;
-  readonly #memory: MemoryProvider;
   readonly #signal: AbortSignal | undefined;
   readonly #stageBudget: TokenBudgetTracker;
   readonly #runBudget: RunBudgetTracker | undefined;
-  #retrievals: readonly Retrieval[] = [];
   #lifecycle: AgentLifecycle = "CREATED";
 
   protected constructor(options: BaseAgentOptions) {
@@ -56,7 +51,6 @@ export abstract class BaseAgent implements StageAgent {
     this.#model = options.model;
     this.#eventLog = options.eventLog;
     this.toolExecutor = options.toolExecutor;
-    this.#memory = options.memory;
     this.#signal = options.signal;
     this.#stageBudget = new TokenBudgetTracker(options.budget);
     this.#runBudget = options.runBudget;
@@ -77,8 +71,6 @@ export abstract class BaseAgent implements StageAgent {
       data: { runId: ctx.runId, stage: this.id, attempt: input.attempt },
     });
     try {
-      this.#retrievals = await this.recallMemory(ctx);
-      throwIfCancelled(this.#signal);
       const result = await this.execute(input, ctx);
       throwIfCancelled(this.#signal);
       await this.recordOutput(ctx, result);
@@ -112,13 +104,7 @@ export abstract class BaseAgent implements StageAgent {
     promptVariables: Readonly<Record<string, string>> = {},
   ): Promise<Record<string, unknown>> {
     const prompt = await loadPrompt(this.id, promptVariables);
-    const memorySections = this.#retrievals.map((retrieval): ContextSection => ({
-      name: `${retrieval.scope} memory`,
-      content: retrieval.content,
-      source: "memory",
-      references: [retrieval.source],
-    }));
-    const promptInput = assemblePromptInput([...sections, ...memorySections]);
+    const promptInput = assemblePromptInput(sections);
     await this.recordContext(ctx, promptInput.sections, promptInput.tokenEstimate);
     const messages: readonly ChatMessage[] = [
       { role: "system", content: prompt.content },
@@ -194,35 +180,6 @@ export abstract class BaseAgent implements StageAgent {
         structuredOutput,
       },
     });
-  }
-
-  private async recallMemory(ctx: TaskContext): Promise<readonly Retrieval[]> {
-    if (this.id !== "PLAN" && this.id !== "ARCH") return [];
-    const query = [ctx.requirement, ctx.plan?.summary ?? ""].join(" ");
-    const retrievals = await this.#memory.recall(query, {
-      scopes: ["episodic", "project", "semantic"],
-      limit: 6,
-      ...(this.#signal === undefined ? {} : { signal: this.#signal }),
-    });
-    for (const retrieval of retrievals) {
-      await this.#eventLog.append({
-        type: "memory.recalled",
-        data: {
-          runId: ctx.runId,
-          stage: this.id,
-          scope: retrieval.scope,
-          source: retrieval.source,
-          entryId: retrieval.entryId,
-          timestamp: retrieval.timestamp,
-          confidence: retrieval.confidence,
-          score: retrieval.score,
-          reason: retrieval.reason,
-          content: auditValue(retrieval.content, "content"),
-          used: true,
-        },
-      });
-    }
-    return retrievals;
   }
 
   private async recordContext(

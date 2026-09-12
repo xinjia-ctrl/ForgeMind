@@ -50,36 +50,14 @@ function isStage(value: unknown): value is StageId {
 
 function describe(event: ForgeMindEvent): string {
   switch (event.type) {
-    case "development.received":
-      return `Received ${event.data.developmentType} for ${event.data.objectKind} ${event.data.objectId}`;
-    case "trigger.decided":
-      return `${event.data.decision}: ${event.data.reason}`;
-    case "negotiation.started":
-      return `Negotiation started for ${event.data.trigger}: ${event.data.topic}`;
-    case "negotiation.round":
-      return `Negotiation round ${event.data.round}: ${event.data.status}`;
-    case "negotiation.resolved":
-      return `Negotiation resolved as ${event.data.decisionRecordId}`;
-    case "negotiation.escalated":
-      return `Negotiation ${event.data.reason}: ${event.data.approved ? "approved" : "denied"}`;
     case "run.started":
       return `Run started on ${event.data.branch}`;
     case "run.resumed":
       return `Run resumed at ${event.data.phase} attempt ${event.data.attempt}`;
-    case "task.started":
-      return `Task ${event.data.taskId} started as ${event.data.childRunId}`;
-    case "task.completed":
-      return `Task ${event.data.taskId} succeeded on ${event.data.branch}`;
-    case "task.failed":
-      return `Task ${event.data.taskId} ${event.data.status.toLocaleLowerCase()}: ${event.data.error}`;
     case "stage.started":
       return `Attempt ${event.data.attempt} started`;
     case "llm.called":
       return `${event.data.model}: ${event.data.inputTokens} input / ${event.data.outputTokens} output tokens`;
-    case "memory.recalled":
-      return `${event.data.used ? "Used" : "Skipped"} ${event.data.scope} memory from ${event.data.source}`;
-    case "memory.stored":
-      return `Stored ${event.data.scope} ${event.data.kind}: ${event.data.path}`;
     case "context.assembled":
       return `Assembled ${event.data.sections.length} context sections (${event.data.tokenEstimate} estimated tokens)`;
     case "tool.called":

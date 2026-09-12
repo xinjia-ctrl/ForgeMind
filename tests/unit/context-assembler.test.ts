@@ -24,10 +24,15 @@ describe("context assembler", () => {
   it("assembles source-labelled sections with deterministic token evidence", () => {
     const prompt = assemblePromptInput([
       { name: "Requirement", content: "Add health route", source: "contract" },
-      { name: "Memory", content: "Reuse router", source: "memory", references: ["memory.json"] },
+      {
+        name: "Workspace",
+        content: "Reuse router",
+        source: "retrieval",
+        references: ["router.ts"],
+      },
     ]);
     assert.match(prompt.content, /source="contract" trust="trusted"/);
-    assert.match(prompt.content, /source="memory" trust="untrusted"/);
+    assert.match(prompt.content, /source="retrieval" trust="untrusted"/);
     assert.ok(prompt.tokenEstimate > 0);
     assert.deepEqual(searchTerms("Add a health-check route"), ["health-check", "route", "add"]);
   });

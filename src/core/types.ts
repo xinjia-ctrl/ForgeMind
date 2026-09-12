@@ -56,16 +56,10 @@ export interface ArchitectureFile {
   readonly purpose: string;
 }
 
-export interface ArchitectureAlternative {
-  readonly position: string;
-  readonly tradeoffs: readonly string[];
-}
-
 export interface ArchDecision {
   readonly decisions: readonly string[];
   readonly files: readonly ArchitectureFile[];
   readonly risks: readonly string[];
-  readonly alternatives?: readonly ArchitectureAlternative[];
   readonly summary: string;
 }
 
@@ -105,7 +99,6 @@ export interface TaskContext {
   readonly requirement: string;
   readonly requirementTrust?: "trusted" | "untrusted";
   readonly requiredAcceptanceCriteria?: readonly AcceptanceCriterion[];
-  readonly upstreamHandoffs?: readonly UpstreamHandoff[];
   readonly repo: { readonly path: string; readonly branch: string };
   readonly plan: TaskPlan | null;
   readonly architecture: ArchDecision | null;
@@ -115,18 +108,6 @@ export interface TaskContext {
     readonly attempt: { readonly stage: StageId; readonly count: number };
     readonly tokenBudget: TokenBudgets;
   };
-}
-
-export interface UpstreamHandoff {
-  readonly taskId: string;
-  readonly repo: string;
-  readonly branch: string;
-  readonly commit: string;
-  readonly summary: string;
-  readonly acceptanceCriteria: readonly AcceptanceCriterion[];
-  readonly verificationEvidence: readonly VerificationEvidence[];
-  readonly artifacts: readonly ArtifactRef[];
-  readonly incompleteItems: readonly string[];
 }
 
 export interface StageInput {

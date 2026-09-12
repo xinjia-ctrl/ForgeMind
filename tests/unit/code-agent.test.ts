@@ -14,7 +14,6 @@ import {
 } from "../../src/core/action-journal.js";
 import { EventLog } from "../../src/core/event-log.js";
 import { FakeChatProvider } from "../../src/llm/fake-provider.js";
-import { NoopMemoryProvider } from "../../src/memory/noop-memory-provider.js";
 import { AutoApprovalGateway } from "../../src/policy/auto-gateway.js";
 import { RulePolicyResolver } from "../../src/policy/resolver.js";
 import { ScopedToolExecutor, ToolRegistry } from "../../src/tools/executor.js";
@@ -106,7 +105,6 @@ describe("CodeAgent edit recovery", () => {
       eventLog,
       toolExecutor: executor,
       budget: DEFAULT_TOKEN_BUDGETS.CODE,
-      memory: new NoopMemoryProvider(),
     });
     let context = createTaskContext({
       runId: "code-recovery",
@@ -355,7 +353,6 @@ function codeAgent(
     eventLog,
     toolExecutor: executor,
     budget: DEFAULT_TOKEN_BUDGETS.CODE,
-    memory: new NoopMemoryProvider(),
     actionJournal,
   });
 }

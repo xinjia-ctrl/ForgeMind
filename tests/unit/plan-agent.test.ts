@@ -11,7 +11,6 @@ import { RunBudgetTracker } from "../../src/core/run-budget.js";
 import { FileRunArtifactStore } from "../../src/core/run-artifact-store.js";
 import type { AcceptanceCriterion } from "../../src/core/types.js";
 import { FakeChatProvider } from "../../src/llm/fake-provider.js";
-import { NoopMemoryProvider } from "../../src/memory/noop-memory-provider.js";
 import { AutoApprovalGateway } from "../../src/policy/auto-gateway.js";
 import { RulePolicyResolver } from "../../src/policy/resolver.js";
 import { ScopedToolExecutor, ToolRegistry } from "../../src/tools/executor.js";
@@ -58,7 +57,6 @@ it("preserves externally supplied acceptance criteria byte-for-byte", async () =
       eventLog,
       toolExecutor: executor,
       budget: DEFAULT_TOKEN_BUDGETS.PLAN,
-      memory: new NoopMemoryProvider(),
       artifactStore: new FileRunArtifactStore(path.join(directory, "artifacts")),
     });
     const context = createTaskContext({
@@ -81,7 +79,7 @@ it("preserves externally supplied acceptance criteria byte-for-byte", async () =
   }
 });
 
-it("releases a failed model reservation so another DAG task can use the shared budget", async () => {
+it("releases a failed model reservation so a later stage can use the shared budget", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-plan-budget-"));
   try {
     const sharedBudget = new RunBudgetTracker({
@@ -123,7 +121,6 @@ it("releases a failed model reservation so another DAG task can use the shared b
         toolExecutor: executor,
         budget: DEFAULT_TOKEN_BUDGETS.PLAN,
         runBudget: sharedBudget,
-        memory: new NoopMemoryProvider(),
         artifactStore: new FileRunArtifactStore(path.join(directory, "artifacts", runId)),
       });
     };
@@ -137,15 +134,15 @@ it("releases a failed model reservation so another DAG task can use the shared b
         tokenBudget: DEFAULT_TOKEN_BUDGETS,
       });
 
-    const failedAgent = await createAgent("failed-dag-task", new FakeChatProvider([]));
+    const failedAgent = await createAgent("failed-stage", new FakeChatProvider([]));
     await assert.rejects(
-      failedAgent.run({ attempt: 1 }, createContext("failed-dag-task")),
+      failedAgent.run({ attempt: 1 }, createContext("failed-stage")),
       /response queue exhausted/,
     );
     assert.equal(sharedBudget.snapshot().outputTokens, 0);
 
     const nextAgent = await createAgent(
-      "next-dag-task",
+      "next-stage",
       new FakeChatProvider([
         JSON.stringify({
           objective: "Create a safe plan",
@@ -154,7 +151,7 @@ it("releases a failed model reservation so another DAG task can use the shared b
         }),
       ]),
     );
-    const output = await nextAgent.run({ attempt: 1 }, createContext("next-dag-task"));
+    const output = await nextAgent.run({ attempt: 1 }, createContext("next-stage"));
 
     assert.equal(output.kind, "plan");
     assert.equal(sharedBudget.snapshot().llmCalls, 2);

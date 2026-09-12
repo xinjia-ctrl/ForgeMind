@@ -1,10 +1,8 @@
 import type { EventLog } from "../core/event-log.js";
 import type { StageId } from "../core/types.js";
-import { approvalAction, authorize } from "../auth/rbac.js";
-import type { ApprovalContext } from "../auth/types.js";
 import type { ApprovalGateway } from "../policy/gateway.js";
 import type { ActionRequest, PolicyResolver } from "../policy/types.js";
-import type { RiskLevel } from "../auth/types.js";
+import type { RiskLevel } from "../policy/types.js";
 import { isCancellation, throwIfCancelled } from "../core/errors.js";
 import { auditValue } from "./audit.js";
 import type { Tool, ToolPolicy, ToolResult } from "./types.js";
@@ -35,8 +33,6 @@ interface ScopedExecutorOptions {
   readonly policy: ToolPolicy;
   readonly policyResolver: PolicyResolver;
   readonly approvalGateway: ApprovalGateway;
-  readonly approvalContext?: ApprovalContext;
-  readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
   readonly runBudget?: RunBudgetTracker;
 }
 
@@ -98,24 +94,13 @@ export class ScopedToolExecutor {
     policy: string,
     policyRisk?: RiskLevel,
   ): Promise<boolean> {
-    const baseRisk = policyRisk ?? this.#options.approvalContext?.risk;
-    const risk =
-      baseRisk === undefined || this.#options.riskTransform === undefined
-        ? baseRisk
-        : this.#options.riskTransform(baseRisk);
     const common = {
       runId: this.#options.runId,
       stage: this.#options.stage,
       tool: action.tool,
       action: auditValue({ args: action.args, command: action.command }),
       policy,
-      ...(risk === undefined ? {} : { risk }),
-      ...(this.#options.approvalContext === undefined
-        ? {}
-        : {
-            actor: this.#options.approvalContext.actor.id,
-            role: this.#options.approvalContext.actor.role,
-          }),
+      ...(policyRisk === undefined ? {} : { risk: policyRisk }),
     };
     if (mode === "allow") return true;
     if (mode === "deny") {
@@ -134,37 +119,7 @@ export class ScopedToolExecutor {
       type: "approval.requested",
       data: { ...common, mode },
     });
-    const context = this.#options.approvalContext;
-    if (context !== undefined) {
-      const effectiveContext = { ...context, risk: risk ?? "high" };
-      const governedAction = approvalAction(effectiveContext.risk);
-      if (governedAction === null) {
-        await this.#options.eventLog.append({
-          type: "approval.approved",
-          data: { ...common, mode, decisionSource: "config" },
-        });
-        return true;
-      }
-      if (!authorize(context.actor, context.scope, governedAction)) {
-        await this.#options.eventLog.append({
-          type: "approval.rejected",
-          data: {
-            ...common,
-            mode,
-            reason: `Actor ${context.actor.id} is not authorized for ${effectiveContext.risk}-risk approval`,
-            decisionSource: "policy",
-          },
-        });
-        return false;
-      }
-    }
-    const approval =
-      context === undefined
-        ? await this.#options.approvalGateway.request(action)
-        : await this.#options.approvalGateway.request(action, {
-            ...context,
-            risk: risk ?? "high",
-          });
+    const approval = await this.#options.approvalGateway.request(action);
     if (approval === "APPROVED") {
       await this.#options.eventLog.append({
         type: "approval.approved",
@@ -172,9 +127,7 @@ export class ScopedToolExecutor {
           ...common,
           mode,
           decisionSource:
-            this.#options.approvalGateway.source === "disabled"
-              ? "config"
-              : this.#options.approvalGateway.source,
+            this.#options.approvalGateway.source === "interactive" ? "interactive" : "auto",
         },
       });
       return true;

@@ -19,71 +19,15 @@ it("keeps the versioned event and replay contract stable", async () => {
       },
     });
     await log.append({
-      type: "task.started",
-      data: {
-        runId: "golden-run",
-        taskId: "backend",
-        childRunId: "golden-run-backend",
-        repo: "/repos/api",
-        requirement: "Add deterministic replay API",
-      },
-    });
-    await log.append({
-      type: "task.completed",
-      data: {
-        runId: "golden-run",
-        taskId: "backend",
-        childRunId: "golden-run-backend",
-        repo: "/repos/api",
-        branch: "forgemind/golden-run-backend",
-        status: "SUCCEEDED",
-        summary: "API committed",
-      },
-    });
-    await log.append({
-      type: "task.failed",
-      data: {
-        runId: "golden-run",
-        taskId: "integration",
-        childRunId: "golden-run-integration",
-        repo: "/repos/web",
-        status: "BLOCKED",
-        error: "Blocked by failed dependencies: frontend",
-      },
-    });
-    await log.append({
       type: "stage.started",
       data: { runId: "golden-run", stage: "PLAN", attempt: 1 },
-    });
-    await log.append({
-      type: "memory.recalled",
-      data: {
-        runId: "golden-run",
-        stage: "PLAN",
-        scope: "project",
-        source: ".forgemind/memory/decisions.json",
-        entryId: "decision-golden",
-        timestamp: "2000-01-01T00:00:00.000Z",
-        confidence: 0.8,
-        score: 2.5,
-        reason: "tag/content overlap: deterministic",
-        content: "<redacted:23 bytes>",
-        used: true,
-      },
     });
     await log.append({
       type: "context.assembled",
       data: {
         runId: "golden-run",
         stage: "PLAN",
-        sections: [
-          {
-            name: "Requirement",
-            source: "contract",
-            tokenEstimate: 6,
-            references: [],
-          },
-        ],
+        sections: [{ name: "Requirement", source: "contract", tokenEstimate: 6, references: [] }],
         tokenEstimate: 6,
       },
     });
@@ -96,70 +40,13 @@ it("keeps the versioned event and replay contract stable", async () => {
         inputTokens: 12,
         outputTokens: 4,
         promptFingerprint: "sha256",
-        promptVersion: "plan.v1",
+        promptVersion: "plan.v4",
         structuredOutput: true,
       },
     });
     await log.append({
-      type: "memory.stored",
-      data: {
-        runId: "golden-run",
-        stage: "PLAN",
-        scope: "project",
-        kind: "decision",
-        path: ".forgemind/memory/decisions.json",
-      },
-    });
-    await log.append({
-      type: "approval.rejected",
-      data: {
-        runId: "golden-run",
-        stage: "PLAN",
-        tool: "write_file",
-        action: { args: { content: "<redacted:12 bytes>" } },
-        policy: "rule:1:deny",
-        mode: "deny",
-        reason: "Action denied by policy",
-        decisionSource: "policy",
-      },
-    });
-    await log.append({
       type: "stage.failed",
-      data: {
-        runId: "golden-run",
-        stage: "PLAN",
-        kind: "STAGE",
-        error: "Planning failed",
-      },
-    });
-    await log.append({
-      type: "negotiation.started",
-      data: {
-        runId: "golden-run",
-        negotiationId: "negotiation-golden",
-        trigger: "arch-conflict",
-        topic: "Choose the replay boundary",
-      },
-    });
-    await log.append({
-      type: "negotiation.round",
-      data: {
-        runId: "golden-run",
-        negotiationId: "negotiation-golden",
-        round: 1,
-        status: "CONVERGED",
-        proposal: "<redacted:20 bytes>",
-        counter: "<redacted:18 bytes>",
-      },
-    });
-    await log.append({
-      type: "negotiation.resolved",
-      data: {
-        runId: "golden-run",
-        negotiationId: "negotiation-golden",
-        decisionRecordId: "decision-golden",
-        decision: "<redacted:20 bytes>",
-      },
+      data: { runId: "golden-run", stage: "PLAN", kind: "STAGE", error: "Planning failed" },
     });
     await log.append({
       type: "run.finished",
@@ -179,14 +66,14 @@ it("keeps the versioned event and replay contract stable", async () => {
         confidence: 0,
       },
     });
+
     const snapshot = JSON.parse(
       await readFile("tests/golden/event-schema.snapshot.json", "utf8"),
     ) as unknown;
     assert.deepEqual(replay(await log.load()), snapshot);
-    const rawEvents = await log.load();
     assert.deepEqual(
-      rawEvents.map((event) => event.seq),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      (await log.load()).map((event) => event.seq),
+      [1, 2, 3, 4, 5, 6, 7],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

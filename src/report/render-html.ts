@@ -1,7 +1,6 @@
 import type {
   ReportContextAssembly,
   ReportGate,
-  ReportMemoryEvent,
   ReportPromptVersion,
   ReportQuality,
   ReportSecurityEvent,
@@ -48,10 +47,6 @@ export function renderReportHtml(model: ReportViewModel): string {
     model.security.length === 0
       ? emptyState("No policy or approval events recorded")
       : model.security.map(renderSecurityEvent).join("");
-  const memory =
-    model.memory.length === 0
-      ? emptyState("No memory was recalled or stored")
-      : model.memory.map(renderMemoryEvent).join("");
   const prompts =
     model.prompts.length === 0
       ? emptyState("No versioned prompt calls recorded")
@@ -146,11 +141,6 @@ export function renderReportHtml(model: ReportViewModel): string {
     <section>
       <div class="section-heading"><div><p class="eyebrow">SECURITY AUDIT</p><h2>Policy and approval decisions</h2></div></div>
       <div class="security-list">${security}</div>
-    </section>
-
-    <section>
-      <div class="section-heading"><div><p class="eyebrow">MEMORY TRACE</p><h2>Recalled and stored project knowledge</h2></div></div>
-      <div class="memory-list">${memory}</div>
     </section>
 
     <section class="split">
@@ -256,9 +246,6 @@ function renderGate(gate: ReportGate): string {
 
 function renderSecurityEvent(event: ReportSecurityEvent): string {
   const meta = [
-    event.actor === undefined
-      ? undefined
-      : `${event.actor}${event.role === undefined ? "" : ` (${event.role})`}`,
     event.policy,
     event.risk === undefined ? undefined : `${event.risk} risk`,
     event.source,
@@ -276,19 +263,6 @@ function renderSecurityEvent(event: ReportSecurityEvent): string {
       <p>${escapeHtml(meta.join(" · "))}</p>
       ${details}
     </div>
-    <time>${escapeHtml(event.ts)}</time>
-  </article>`;
-}
-
-function renderMemoryEvent(event: ReportMemoryEvent): string {
-  const meta = [
-    event.reason,
-    event.score === undefined ? undefined : `score ${event.score.toFixed(2)}`,
-    event.used === undefined ? undefined : event.used ? "used" : "skipped",
-  ].filter((value): value is string => value !== undefined);
-  return `<article class="memory-event">
-    <div class="security-decision">${escapeHtml(event.operation)}</div>
-    <div><div class="badges"><span class="badge stage">${escapeHtml(event.stage)}</span><span class="badge">${escapeHtml(event.scope)}</span><span class="badge">#${formatNumber(event.seq)}</span></div><strong>${escapeHtml(event.source)}</strong><p>${escapeHtml(meta.join(" · "))}</p></div>
     <time>${escapeHtml(event.ts)}</time>
   </article>`;
 }
@@ -364,7 +338,7 @@ const PLAYER_SCRIPT = String.raw`
 
 const STYLES = String.raw`
 .quality-panel{display:grid;grid-template-columns:150px minmax(260px,1fr) minmax(280px,1.2fr);gap:24px;align-items:stretch;margin-bottom:64px;padding:22px;border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:14px;background:linear-gradient(145deg,var(--panel2),var(--panel))}.quality-panel.strong{border-left-color:var(--green)}.quality-panel.weak{border-left-color:var(--red)}.quality-score{display:flex;flex-wrap:wrap;align-content:center;align-items:baseline;gap:5px;padding-right:20px;border-right:1px solid var(--line)}.quality-score span{flex-basis:100%;color:var(--amber);font:800 11px ui-monospace,monospace;letter-spacing:.08em}.quality-panel.strong .quality-score span{color:var(--green)}.quality-panel.weak .quality-score span{color:var(--red)}.quality-score strong{font:800 52px ui-monospace,monospace;line-height:1}.quality-score small{color:var(--muted)}.quality-metrics{margin:0}.quality-metrics div{padding:9px 0}.quality-recommendations{padding-left:20px;border-left:1px solid var(--line)}.quality-recommendations>strong{font-size:13px}.quality-recommendations ul{margin:12px 0 0;padding-left:18px;color:var(--muted);font-size:12px;line-height:1.6}.quality-recommendations li+li{margin-top:6px}@media(max-width:900px){.quality-panel{grid-template-columns:1fr}.quality-score,.quality-recommendations{padding:0 0 16px;border-right:0;border-left:0;border-bottom:1px solid var(--line)}.quality-recommendations{padding-top:16px;border-bottom:0}}
-.memory-list{display:flex;flex-direction:column;gap:8px;margin-bottom:56px}.memory-event{display:grid;grid-template-columns:88px 1fr auto;gap:16px;align-items:start;padding:14px;border:1px solid var(--line);border-left:3px solid var(--violet);border-radius:10px;background:var(--panel)}.memory-event .security-decision{color:var(--violet)}.memory-event strong,.compact-card strong{display:block;margin:8px 0 4px;overflow-wrap:anywhere}.memory-event p,.compact-card p{color:var(--muted);font-size:12px;margin:0;overflow-wrap:anywhere}.memory-event>time{color:var(--muted);font:10px ui-monospace,monospace}.prompt-list,.context-list{display:flex;flex-direction:column;gap:8px}.compact-card{padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.context-sections{list-style:none;padding:0;margin:12px 0 0}.context-sections li{padding:8px 0;border-top:1px solid rgba(80,65,45,.09)}.context-sections strong{margin:0;font-size:12px}.context-sections small{display:block;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}@media(max-width:760px){.memory-event{grid-template-columns:1fr}.memory-event>time{margin-top:4px}}
+.prompt-list,.context-list{display:flex;flex-direction:column;gap:8px}.compact-card{padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.context-sections{list-style:none;padding:0;margin:12px 0 0}.context-sections li{padding:8px 0;border-top:1px solid rgba(80,65,45,.09)}.context-sections strong{margin:0;font-size:12px}.context-sections small{display:block;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
 :root{color-scheme:light;--bg:#f2e8d9;--panel:#fffaf2;--panel2:#f8efdf;--line:#dfd0bd;--text:#30291f;--muted:#776a5b;--cyan:#697341;--violet:#846b7a;--green:#5f7844;--red:#b3473c;--amber:#986326;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 15% -10%,#e6d3b7 0,transparent 32rem),var(--bg);color:var(--text)}body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(91,72,48,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(91,72,48,.035) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,#000,transparent 80%)}
 main{width:min(1180px,calc(100% - 40px));margin:auto;padding:56px 0 40px;position:relative}.hero{display:flex;justify-content:space-between;gap:32px;align-items:flex-start;padding-bottom:36px;border-bottom:1px solid var(--line)}.brand,.eyebrow{color:var(--cyan);font:700 11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;margin:0 0 12px}.hero h1{font-size:clamp(28px,5vw,58px);letter-spacing:-.045em;margin:0;overflow-wrap:anywhere}.requirement{max-width:780px;color:#5f5447;font-size:18px;line-height:1.6;margin:18px 0 0;white-space:pre-wrap}

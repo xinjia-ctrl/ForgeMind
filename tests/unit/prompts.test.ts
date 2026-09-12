@@ -11,7 +11,7 @@ describe("prompt governance", () => {
       maxActions: "3",
       fastCheckIds: "primary",
     });
-    assert.equal(prompt.version, "code.v4");
+    assert.equal(prompt.version, "code.v5");
     for (const heading of [
       "角色与职责",
       "输入契约摘要",
@@ -25,10 +25,10 @@ describe("prompt governance", () => {
     assert.match(prompt.content, /"kind":"write"/);
     assert.throws(() => interpolatePrompt("Hello {{name}}", {}), /Unresolved/);
     const architecturePrompt = await loadPrompt("ARCH");
-    assert.equal(architecturePrompt.version, "architecture.v3");
+    assert.equal(architecturePrompt.version, "architecture.v4");
     assert.match(architecturePrompt.content, /arrays of JSON strings, never arrays of objects/);
     const reviewPrompt = await loadPrompt("REVIEW");
-    assert.equal(reviewPrompt.version, "review.v4");
+    assert.equal(reviewPrompt.version, "review.v5");
     assert.match(reviewPrompt.content, /explicitly assigned to REVIEW/);
   });
 
@@ -50,7 +50,7 @@ describe("prompt governance", () => {
       properties: Record<string, unknown>;
       required: string[];
     };
-    assert.ok("alternatives" in architectureSchema.properties);
-    assert.equal(architectureSchema.required.includes("alternatives"), true);
+    assert.equal("alternatives" in architectureSchema.properties, false);
+    assert.deepEqual(architectureSchema.required, ["decisions", "files", "risks", "summary"]);
   });
 });

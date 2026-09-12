@@ -24,9 +24,7 @@ export interface RunCheckpoint {
   readonly attempt: number;
   readonly context: TaskContext;
   readonly feedback?: string;
-  readonly reviewNegotiated: boolean;
   readonly reworkHistory: readonly CheckpointReworkRecord[];
-  readonly negotiatedDecisions: readonly string[];
   readonly budget?: RunBudgetSnapshot;
   readonly manifest?: RunManifest;
   readonly updatedAt: string;
@@ -110,15 +108,8 @@ export function parseRunCheckpoint(value: unknown): RunCheckpoint {
     throw new FatalFailure("Checkpoint context does not match its run id");
   }
   const reworkHistory = value["reworkHistory"];
-  const decisions = value["negotiatedDecisions"];
-  if (!Array.isArray(reworkHistory) || !Array.isArray(decisions)) {
+  if (!Array.isArray(reworkHistory)) {
     throw new FatalFailure("Invalid checkpoint recovery history");
-  }
-  if (!decisions.every((item) => typeof item === "string")) {
-    throw new FatalFailure("Invalid checkpoint negotiated decisions");
-  }
-  if (typeof value["reviewNegotiated"] !== "boolean") {
-    throw new FatalFailure("Invalid checkpoint negotiation state");
   }
   if (value["budget"] !== undefined && !isRunBudgetSnapshot(value["budget"])) {
     throw new FatalFailure("Invalid checkpoint run budget usage");
@@ -180,9 +171,7 @@ function isRunManifest(value: unknown): value is RunManifest {
       "testCommandHash",
       "budgetHash",
     ].every((key) => typeof value[key] === "string") &&
-    Object.values(value["promptVersions"]).every((item) => typeof item === "string") &&
-    Array.isArray(value["upstreamCommitHashes"]) &&
-    value["upstreamCommitHashes"].every((item) => typeof item === "string")
+    Object.values(value["promptVersions"]).every((item) => typeof item === "string")
   );
 }
 
@@ -199,7 +188,6 @@ function isTaskContext(value: unknown): value is TaskContext {
     (value["requiredAcceptanceCriteria"] === undefined ||
       (Array.isArray(value["requiredAcceptanceCriteria"]) &&
         value["requiredAcceptanceCriteria"].every(isAcceptanceCriterion))) &&
-    (value["upstreamHandoffs"] === undefined || Array.isArray(value["upstreamHandoffs"])) &&
     isRecord(repo) &&
     typeof repo["path"] === "string" &&
     typeof repo["branch"] === "string" &&

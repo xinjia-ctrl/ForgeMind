@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { it } from "node:test";
 import { OpenAICompatibleChatProvider } from "../../src/llm/openai-compatible-provider.js";
-import { OpenAICompatibleEmbeddingProvider } from "../../src/memory/openai-compatible-embedding-provider.js";
 import { detectContainerRuntime } from "../../src/sandbox/detect.js";
 import { ContainerProcessRunner } from "../../src/sandbox/docker.js";
 
@@ -72,42 +71,10 @@ it("calls a real external chat model", { timeout: 180_000 }, async (context) => 
   assert.match(completion.content.trim(), /^FORGEMIND_MODEL_OK$/);
 });
 
-it("calls a real external vector provider", { timeout: 180_000 }, async (context) => {
-  const apiKey = process.env["OPENAI_API_KEY"];
-  const model = process.env["FORGEMIND_SMOKE_EMBEDDING_MODEL"];
-  const dimension = optionalPositiveInteger(process.env["FORGEMIND_SMOKE_EMBEDDING_DIMENSION"]);
-  if (apiKey === undefined || model === undefined || dimension === null) {
-    skipOrFail(
-      context,
-      "OPENAI_API_KEY, FORGEMIND_SMOKE_EMBEDDING_MODEL, and FORGEMIND_SMOKE_EMBEDDING_DIMENSION are not configured",
-    );
-    return;
-  }
-  const provider = new OpenAICompatibleEmbeddingProvider({
-    apiKey,
-    model,
-    dimension,
-    ...(process.env["OPENAI_BASE_URL"] === undefined
-      ? {}
-      : { baseUrl: process.env["OPENAI_BASE_URL"] }),
-    timeoutMs: 120_000,
-  });
-  const vector = await provider.embed("ForgeMind external vector provider smoke test");
-  assert.equal(vector.length, dimension);
-  assert.ok(vector.every((value) => Number.isFinite(value)));
-  assert.ok(vector.some((value) => value !== 0));
-});
-
 function containerRuntime(value: string | undefined): "docker" | "podman" | "auto" {
   if (value === undefined || value === "auto") return "auto";
   if (value === "docker" || value === "podman") return value;
   throw new Error("FORGEMIND_SMOKE_CONTAINER_RUNTIME must be docker, podman, or auto");
-}
-
-function optionalPositiveInteger(value: string | undefined): number | null {
-  if (value === undefined || !/^\d+$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function skipOrFail(context: { skip(message: string): void }, message: string): void {

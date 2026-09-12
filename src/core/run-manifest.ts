@@ -13,7 +13,6 @@ export interface RunManifest {
   readonly policyHash: string;
   readonly testCommandHash: string;
   readonly budgetHash: string;
-  readonly upstreamCommitHashes: readonly string[];
 }
 
 export function sha256(value: unknown): string {

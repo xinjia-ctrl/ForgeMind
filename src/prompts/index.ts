@@ -3,18 +3,18 @@ import type { StageId } from "../core/types.js";
 
 export const PROMPT_VERSIONS = {
   PLAN: "plan.v4",
-  ARCH: "architecture.v3",
-  CODE: "code.v4",
-  REVIEW: "review.v4",
+  ARCH: "architecture.v4",
+  CODE: "code.v5",
+  REVIEW: "review.v5",
   TEST: "test.v1",
   COMMIT: "commit.v1",
 } as const satisfies Readonly<Record<StageId, string>>;
 
 const PROMPT_FILES = {
   PLAN: "plan.v4.md",
-  ARCH: "architecture.v3.md",
-  CODE: "code.v4.md",
-  REVIEW: "review.v4.md",
+  ARCH: "architecture.v4.md",
+  CODE: "code.v5.md",
+  REVIEW: "review.v5.md",
   TEST: "test.v1.md",
   COMMIT: "commit.v1.md",
 } as const satisfies Readonly<Record<StageId, string>>;
@@ -72,7 +72,7 @@ const SCHEMAS: Readonly<Record<StageId, Readonly<Record<string, unknown>>>> = {
     },
     summary: { type: "string" },
   }),
-  ARCH: objectSchema(["decisions", "files", "risks", "alternatives", "summary"], {
+  ARCH: objectSchema(["decisions", "files", "risks", "summary"], {
     decisions: { type: "array", items: { type: "string" } },
     files: {
       type: "array",
@@ -82,13 +82,6 @@ const SCHEMAS: Readonly<Record<StageId, Readonly<Record<string, unknown>>>> = {
       }),
     },
     risks: { type: "array", items: { type: "string" } },
-    alternatives: {
-      type: "array",
-      items: objectSchema(["position", "tradeoffs"], {
-        position: { type: "string" },
-        tradeoffs: { type: "array", minItems: 1, items: { type: "string" } },
-      }),
-    },
     summary: { type: "string" },
   }),
   CODE: objectSchema(["basedOnEvidence", "todo", "actions"], {
@@ -133,15 +126,15 @@ const SCHEMAS: Readonly<Record<StageId, Readonly<Record<string, unknown>>>> = {
   }),
   REVIEW: objectSchema(["approved", "reason", "feedback", "evidence", "acceptanceCriteria"], {
     approved: { type: "boolean" },
-    reason: { type: "string" },
-    feedback: { type: "string" },
-    evidence: { type: "string" },
+    reason: { type: "string", minLength: 1 },
+    feedback: { type: "string", minLength: 1 },
+    evidence: { type: "string", minLength: 1 },
     acceptanceCriteria: {
       type: "array",
       items: objectSchema(["criterionId", "satisfied", "evidence"], {
         criterionId: { type: "string" },
         satisfied: { type: "boolean" },
-        evidence: { type: "string" },
+        evidence: { type: "string", minLength: 1 },
       }),
     },
   }),

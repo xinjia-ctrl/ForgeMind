@@ -6,8 +6,6 @@ import { PlanAgent, PLAN_TOOLS } from "../agents/plan-agent.js";
 import { ReviewAgent, REVIEW_TOOLS } from "../agents/review-agent.js";
 import { TestGate, TEST_TOOLS } from "../agents/test-agent.js";
 import type { ChatProvider } from "../llm/chat-provider.js";
-import type { ApprovalContext, RiskLevel } from "../auth/types.js";
-import type { MemoryProvider } from "../memory/memory-provider.js";
 import type { ApprovalGateway } from "../policy/gateway.js";
 import type { PolicyResolver } from "../policy/types.js";
 import { ScopedToolExecutor, type ToolRegistry } from "../tools/executor.js";
@@ -32,11 +30,8 @@ interface AgentFactoryOptions {
   readonly skipGitHooks: boolean;
   readonly policyResolver: PolicyResolver;
   readonly approvalGateway: ApprovalGateway;
-  readonly approvalContext?: ApprovalContext;
-  readonly memory: MemoryProvider;
   readonly toolAllowlist?: readonly string[];
   readonly commandAllowlist?: readonly (readonly string[])[];
-  readonly riskTransform?: (risk: RiskLevel) => RiskLevel;
   readonly signal?: AbortSignal;
   readonly artifactStore: RunArtifactStore;
   readonly runBudget: RunBudgetTracker;
@@ -67,12 +62,6 @@ export class DefaultAgentFactory implements AgentFactory {
       policyResolver: this.#options.policyResolver,
       approvalGateway: this.#options.approvalGateway,
       runBudget: this.#options.runBudget,
-      ...(this.#options.riskTransform === undefined
-        ? {}
-        : { riskTransform: this.#options.riskTransform }),
-      ...(this.#options.approvalContext === undefined
-        ? {}
-        : { approvalContext: this.#options.approvalContext }),
     });
     const common: Omit<BaseAgentOptions, "id" | "tools"> = {
       provider: this.#options.provider,
@@ -80,7 +69,6 @@ export class DefaultAgentFactory implements AgentFactory {
       eventLog: this.#options.eventLog,
       toolExecutor,
       budget: this.#options.budgets[stage],
-      memory: this.#options.memory,
       runBudget: this.#options.runBudget,
       ...(this.#options.signal === undefined ? {} : { signal: this.#options.signal }),
     };

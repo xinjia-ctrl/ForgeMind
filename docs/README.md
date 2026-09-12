@@ -1,20 +1,10 @@
-# ForgeMind Documentation
+# ForgeMind 文档
 
-The root README is the project overview. These documents separate current behavior from historical design work.
+这组文档只描述当前代码，不保留已删除功能的历史方案。
 
-## Current documents
-
-| Document                            | Purpose                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------- |
-| [Product scope](PRD.md)             | Current users, product contract, scope, non-goals, and success evidence   |
-| [Architecture](ARCHITECTURE.md)     | Current component boundaries, state machines, policy, recovery, and ADRs  |
-| [Product manual](PRODUCT_MANUAL.md) | CLI, Web workspace, configuration, reports, memory, DAG, and integrations |
-| [Evaluation](EVALUATION.md)         | What is tested, latest real-agent evidence, and the next evaluation bar   |
-| [Limitations](LIMITATIONS.md)       | Trust boundary, operational gaps, and claims the project does not make    |
-| [Vision](VISION.md)                 | Stable direction and near-term priorities                                 |
-
-## Historical documents
-
-Version-specific PRDs and architecture snapshots live in [`history/`](history/README.md). They are retained to show how the design evolved; their status labels, test counts, and roadmaps are snapshots and may not describe the current repository.
-
-When documents disagree, current executable behavior and tests take precedence, followed by the current architecture and product-scope documents.
+- [PRD](PRD.md)：目标、用户与功能边界
+- [ARCHITECTURE](ARCHITECTURE.md)：主流程、模块和关键约束
+- [PRODUCT_MANUAL](PRODUCT_MANUAL.md)：配置与使用
+- [EVALUATION](EVALUATION.md)：测试与真实模型评测
+- [LIMITATIONS](LIMITATIONS.md)：明确不支持的能力
+- [VISION](VISION.md)：后续演进原则

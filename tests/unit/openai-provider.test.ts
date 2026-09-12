@@ -118,7 +118,7 @@ describe("OpenAI-compatible structured output", () => {
     assert.equal(body.response_format, undefined);
   });
 
-  it("uses non-thinking JSON output for the official DeepSeek V4 endpoint", async () => {
+  it("uses non-thinking JSON output for the official DeepSeek V4.1 endpoint", async () => {
     let requestBody = "";
     globalThis.fetch = (_input, init) => {
       requestBody = typeof init?.body === "string" ? init.body : "";
@@ -136,7 +136,7 @@ describe("OpenAI-compatible structured output", () => {
       baseUrl: "https://api.deepseek.com",
     });
     await provider.complete([{ role: "user", content: "return json" }], {
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       temperature: 0,
       maxOutputTokens: 100,
       structuredOutput: {

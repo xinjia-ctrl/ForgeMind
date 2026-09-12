@@ -127,6 +127,7 @@ export class CodeAgent extends BaseAgent {
       );
       const observations: string[] = [`Decision evidence: ${basedOnEvidence}`];
       let finishEvidence: string | undefined;
+      let finalFastCheckEvidence: string | undefined;
       let roundFailed = false;
       const executedJournalIds: string[] = [];
 
@@ -151,6 +152,10 @@ export class CodeAgent extends BaseAgent {
         const reconciled = await this.reconcileAction(action, journalRecord, changedPaths);
         const outcome = reconciled ?? (await this.executeAction(action, changedPaths));
         observations.push(outcome.observation);
+        finalFastCheckEvidence =
+          action.kind === "fast-check" && outcome.ok
+            ? `Registered fast check ${action.checkId} passed; independent TEST and REVIEW gates will verify acceptance.`
+            : undefined;
         if (outcome.ok) {
           lastFailedActionObservation = undefined;
           repeatedFailedActionCount = 0;
@@ -215,6 +220,15 @@ export class CodeAgent extends BaseAgent {
         }));
         return { kind: "code", summary: finishEvidence, artifacts };
       }
+      if (finalFastCheckEvidence !== undefined && !roundFailed && changedPaths.size > 0) {
+        const artifacts: ArtifactRef[] = [...changedPaths].sort().map((artifactPath) => ({
+          path: artifactPath,
+          kind: "source",
+          stage: "CODE",
+          summary: finalFastCheckEvidence,
+        }));
+        return { kind: "code", summary: finalFastCheckEvidence, artifacts };
+      }
       if (repeatedObservationActionRounds >= 1) {
         throw new CodeLoopFailure(
           "NO_PROGRESS",
@@ -255,17 +269,6 @@ export class CodeAgent extends BaseAgent {
         content: ctx.architecture?.summary ?? "No separate architecture stage was selected.",
         source: "contract" as const,
         trust: "untrusted" as const,
-      },
-      {
-        name: "Upstream handoff evidence",
-        content: renderUpstreamHandoffs(ctx),
-        source: "retrieval" as const,
-        references: (ctx.upstreamHandoffs ?? []).flatMap((handoff) =>
-          handoff.artifacts.map(
-            (artifact) =>
-              `${handoff.taskId}:${artifact.path}@${artifact.version ?? handoff.commit}`,
-          ),
-        ),
       },
       {
         name: "Cumulative rework evidence",
@@ -666,24 +669,6 @@ function failedObservation(
   result: ToolResult,
 ): { readonly ok: false; readonly observation: string } {
   return { ok: false, observation: `${action.kind} failed: ${result.error ?? "unknown error"}` };
-}
-
-function renderUpstreamHandoffs(ctx: TaskContext): string {
-  const handoffs = ctx.upstreamHandoffs ?? [];
-  if (handoffs.length === 0) return "No upstream task handoffs.";
-  return handoffs
-    .map((handoff) =>
-      [
-        `Task ${handoff.taskId} (${handoff.repo})`,
-        `Branch: ${handoff.branch}`,
-        `Commit: ${handoff.commit}`,
-        `Summary: ${handoff.summary}`,
-        `Acceptance criteria: ${renderAcceptanceContract(handoff.acceptanceCriteria)}`,
-        `Incomplete items: ${handoff.incompleteItems.join("; ") || "none"}`,
-        `Artifacts: ${handoff.artifacts.map((artifact) => `${artifact.path}@${artifact.version ?? handoff.commit}`).join(", ") || "none"}`,
-      ].join("\n"),
-    )
-    .join("\n\n");
 }
 
 function extractFiles(result: ToolResult): string[] {

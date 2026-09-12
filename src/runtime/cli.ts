@@ -4,14 +4,14 @@ import { errorMessage } from "../core/errors.js";
 import { EventLog } from "../core/event-log.js";
 import { replay } from "../core/replay.js";
 import { workflowSignature } from "../core/reproducibility.js";
-import { runDagForgeMind } from "../dag/run.js";
-import { queryAuditEvents } from "../audit/query.js";
-import { exportAuditResult } from "../audit/export.js";
-import { actorById, loadActorPolicy } from "../auth/policy-source.js";
-import { authorize } from "../auth/rbac.js";
-import type { Actor } from "../auth/types.js";
-import { createRunId } from "./run.js";
 import { OpenAICompatibleChatProvider } from "../llm/openai-compatible-provider.js";
+import {
+  configuredProviderId,
+  inferProviderId,
+  isProviderId,
+  providerDefinition,
+  resolveProviderApiKey,
+} from "../llm/provider-catalog.js";
 import { generateReport } from "../report/report.js";
 import { inspectGitWorkspace } from "./git-workspace.js";
 import { runForgeMind } from "./run.js";
@@ -30,6 +30,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         "repo",
         "requirement",
         "model",
+        "provider",
         "base-url",
         "temperature",
         "run-id",
@@ -40,51 +41,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         "config",
         "yes",
         "no-approve",
-        "memory",
-        "actor-policy",
-        "actor",
-        "team",
       ]);
       return await runCommand(parsed.values);
-    }
-    if (parsed.command === "dag run") {
-      assertKnownOptions(parsed.values, [
-        "repos",
-        "requirement",
-        "model",
-        "base-url",
-        "temperature",
-        "run-id",
-        "test-command",
-        "max-rework",
-        "max-tasks",
-        "max-concurrency",
-        "worktrees-root",
-        "skip-git-hooks",
-        "config",
-        "yes",
-        "no-approve",
-        "memory",
-        "actor-policy",
-        "actor",
-        "team",
-      ]);
-      return await dagRunCommand(parsed.values);
-    }
-    if (parsed.command === "audit export") {
-      assertKnownOptions(parsed.values, [
-        "repo",
-        "from",
-        "to",
-        "actor",
-        "filter-actor",
-        "filter-repo",
-        "status",
-        "format",
-        "name",
-        "actor-policy",
-      ]);
-      return await auditExportCommand(parsed.values);
     }
     if (parsed.command === "web") {
       assertKnownOptions(parsed.values, ["port", "config"]);
@@ -114,118 +72,6 @@ async function webCommand(values: ReadonlyMap<string, string>): Promise<number> 
   });
   process.stdout.write(`ForgeMind Web is ready: ${app.url}\n`);
   return 0;
-}
-
-async function auditExportCommand(values: ReadonlyMap<string, string>): Promise<number> {
-  const workspace = await inspectGitWorkspace(required(values, "repo"));
-  const formatValue = values.get("format") ?? "json";
-  if (formatValue !== "json" && formatValue !== "csv") {
-    throw new Error("--format must be json or csv");
-  }
-  const status = values.get("status");
-  if (
-    status !== undefined &&
-    status !== "SUCCEEDED" &&
-    status !== "FAILED" &&
-    status !== "BLOCKED"
-  ) {
-    throw new Error("--status must be SUCCEEDED, FAILED, or BLOCKED");
-  }
-  const actor = await requiredActor(values);
-  const authorizedRepo = values.get("filter-repo") ?? workspace.root;
-  if (!authorize(actor, { repo: authorizedRepo }, "view")) {
-    throw new Error(`Actor ${actor.id} is not authorized to view ${authorizedRepo}`);
-  }
-  const result = await queryAuditEvents(
-    [
-      path.join(workspace.commonGitDirectory, "forgemind", "runs"),
-      path.join(workspace.commonGitDirectory, "forgemind", "dag-runs"),
-    ],
-    {
-      from: required(values, "from"),
-      to: required(values, "to"),
-      ...optionalValue(values, "filter-actor", "actor"),
-      ...optionalValue(values, "filter-repo", "repo"),
-      ...(status === undefined ? {} : { status }),
-    },
-  );
-  const name = values.get("name") ?? `audit-${createRunId()}`;
-  const filePath = await exportAuditResult(result, {
-    directory: path.join(workspace.commonGitDirectory, "forgemind", "audit"),
-    name,
-    format: formatValue,
-  });
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        path: filePath,
-        format: formatValue,
-        records: result.records.length,
-        scannedFiles: result.scannedFiles,
-        scannedEvents: result.scannedEvents,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return 0;
-}
-
-async function dagRunCommand(values: ReadonlyMap<string, string>): Promise<number> {
-  const repositories = required(values, "repos")
-    .split(",")
-    .map((repository) => repository.trim())
-    .filter(Boolean);
-  if (repositories.length === 0) throw new Error("--repos must contain at least one path");
-  const requirement = required(values, "requirement");
-  const maxRework = optionalNonNegativeInteger(values, "max-rework");
-  const maxTasks = optionalPositiveInteger(values, "max-tasks");
-  const maxConcurrency = optionalPositiveInteger(values, "max-concurrency");
-  const skipGitHooks = parseBooleanOption(values, "skip-git-hooks", false);
-  const approveAll = parseBooleanOption(values, "yes", false);
-  const noApprove = parseBooleanOption(values, "no-approve", false);
-  const memory = parseBooleanOption(values, "memory", false);
-  const actor = await optionalActor(values);
-  if (approveAll && noApprove) throw new Error("--yes and --no-approve cannot be combined");
-  const { model, provider } = llmFrom(values);
-  const cancellation = processCancellation();
-  const execution = await runDagForgeMind({
-    repositories,
-    requirement,
-    provider,
-    model,
-    signal: cancellation.signal,
-    ...optionalValue(values, "run-id", "parentRunId"),
-    ...optionalValue(values, "test-command", "testCommand"),
-    ...optionalValue(values, "config", "configPath"),
-    ...optionalValue(values, "worktrees-root", "worktreesRoot"),
-    ...(maxRework === undefined ? {} : { maxRework }),
-    ...(maxTasks === undefined ? {} : { maxTasks }),
-    ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
-    skipGitHooks,
-    approveAll,
-    noApprove,
-    memory,
-    ...(actor === undefined ? {} : { actor }),
-    ...optionalValue(values, "team", "team"),
-  }).finally(cancellation.dispose);
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        parentRunId: execution.result.parentRunId,
-        status: execution.result.status,
-        summary: execution.plan.summary,
-        tasks: execution.result.tasks,
-        prList: execution.result.prList,
-        prListArtifact: execution.prListPath,
-        workspaces: execution.workspaces,
-        eventLog: execution.eventLogPath,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return execution.result.status === "SUCCEEDED" ? 0 : 1;
 }
 
 async function reportCommand(values: ReadonlyMap<string, string>): Promise<number> {
@@ -259,11 +105,9 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
   const skipGitHooks = parseBooleanOption(values, "skip-git-hooks", false);
   const approveAll = parseBooleanOption(values, "yes", false);
   const noApprove = parseBooleanOption(values, "no-approve", false);
-  const memory = parseBooleanOption(values, "memory", false);
   const runId = values.get("run-id");
   const resume = parseBooleanOption(values, "resume", false);
   if (resume && runId === undefined) throw new Error("--resume requires --run-id");
-  const actor = await optionalActor(values);
   if (approveAll && noApprove) throw new Error("--yes and --no-approve cannot be combined");
   const { model, provider } = llmFrom(values);
   const testCommand = values.get("test-command");
@@ -282,9 +126,6 @@ async function runCommand(values: ReadonlyMap<string, string>): Promise<number> 
     skipGitHooks,
     approveAll,
     noApprove,
-    memory,
-    ...(actor === undefined ? {} : { actor }),
-    ...optionalValue(values, "team", "team"),
     ...(configPath === undefined ? {} : { configPath }),
   }).finally(cancellation.dispose);
   process.stdout.write(
@@ -322,11 +163,10 @@ async function replayCommand(values: ReadonlyMap<string, string>): Promise<numbe
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const rootCommand = argv[0] ?? "help";
-  const nestedCommand = rootCommand === "dag" || rootCommand === "audit" ? argv[1] : undefined;
-  const command = nestedCommand === undefined ? rootCommand : `${rootCommand} ${nestedCommand}`;
-  const firstOptionIndex = nestedCommand === undefined ? 1 : 2;
+  const command = rootCommand;
+  const firstOptionIndex = 1;
   const values = new Map<string, string>();
-  const booleanOptions = new Set(["skip-git-hooks", "yes", "no-approve", "memory", "resume"]);
+  const booleanOptions = new Set(["skip-git-hooks", "yes", "no-approve", "resume"]);
   for (let index = firstOptionIndex; index < argv.length;) {
     const flag = argv[index];
     if (flag === undefined || !flag.startsWith("--")) {
@@ -353,16 +193,36 @@ function llmFrom(values: ReadonlyMap<string, string>): {
   readonly model: string;
   readonly provider: OpenAICompatibleChatProvider;
 } {
-  const apiKey = process.env["OPENAI_API_KEY"];
-  if (apiKey === undefined || apiKey.length === 0) {
-    throw new Error("OPENAI_API_KEY is required");
+  const requestedProvider = values.get("provider");
+  if (requestedProvider !== undefined && !isProviderId(requestedProvider)) {
+    throw new Error(`Unknown provider: ${requestedProvider}`);
+  }
+  const commandBaseUrl = values.get("base-url");
+  const configuredProvider = configuredProviderId(process.env);
+  const providerId =
+    requestedProvider ??
+    (commandBaseUrl === undefined ? configuredProvider : inferProviderId(commandBaseUrl));
+  const definition = providerDefinition(providerId);
+  const apiKey = resolveProviderApiKey(providerId, process.env);
+  if (apiKey === undefined) {
+    throw new Error(
+      `A credential for ${definition.label} is required (${definition.apiKeyEnvironments.join(" or ")})`,
+    );
+  }
+  const baseUrl =
+    commandBaseUrl ??
+    (providerId === "custom" ? process.env["OPENAI_BASE_URL"] : definition.baseUrl);
+  if (baseUrl === undefined || baseUrl.trim().length === 0) {
+    throw new Error("A base URL is required for the custom provider");
   }
   return {
-    model: values.get("model") ?? process.env["FORGEMIND_MODEL"] ?? "gpt-4.1-mini",
+    model:
+      values.get("model") ??
+      (providerId === configuredProvider ? process.env["FORGEMIND_MODEL"] : undefined) ??
+      definition.defaultModel,
     provider: new OpenAICompatibleChatProvider({
       apiKey,
-      baseUrl:
-        values.get("base-url") ?? process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1",
+      baseUrl,
       structuredOutput: process.env["FORGEMIND_STRUCTURED_OUTPUT"] !== "0",
       ...temperatureOverride(values),
     }),
@@ -391,32 +251,6 @@ function optionalPort(values: ReadonlyMap<string, string>, key: string): number 
   return parsed;
 }
 
-function optionalNonNegativeInteger(
-  values: ReadonlyMap<string, string>,
-  key: string,
-): number | undefined {
-  const value = values.get(key);
-  if (value === undefined) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    throw new Error(`--${key} must be a non-negative integer`);
-  }
-  return parsed;
-}
-
-function optionalPositiveInteger(
-  values: ReadonlyMap<string, string>,
-  key: string,
-): number | undefined {
-  const value = values.get(key);
-  if (value === undefined) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`--${key} must be a positive integer`);
-  }
-  return parsed;
-}
-
 function optionalValue<K extends string>(
   values: ReadonlyMap<string, string>,
   source: string,
@@ -424,24 +258,6 @@ function optionalValue<K extends string>(
 ): { readonly [P in K]?: string } {
   const value = values.get(source);
   return value === undefined ? {} : ({ [target]: value } as { readonly [P in K]: string });
-}
-
-async function optionalActor(values: ReadonlyMap<string, string>): Promise<Actor | undefined> {
-  const policyPath = values.get("actor-policy");
-  const actorId = values.get("actor");
-  if (policyPath === undefined && actorId === undefined) return undefined;
-  if (policyPath === undefined || actorId === undefined) {
-    throw new Error("--actor-policy and --actor must be provided together");
-  }
-  const actor = actorById(await loadActorPolicy(policyPath), actorId);
-  if (actor === undefined) throw new Error(`Unknown actor: ${actorId}`);
-  return actor;
-}
-
-async function requiredActor(values: ReadonlyMap<string, string>): Promise<Actor> {
-  const actor = await optionalActor(values);
-  if (actor === undefined) throw new Error("--actor-policy and --actor are required");
-  return actor;
 }
 
 function parseBooleanOption(
@@ -486,7 +302,7 @@ function processCancellation(): { readonly signal: AbortSignal; readonly dispose
 
 function printHelp(): void {
   process.stdout.write(
-    `ForgeMind\n\nUsage:\n  forge-mind web [--port <number>] [--config <path>]\n  forge-mind run --repo <path> --requirement <text> [--run-id <id> --resume] [--model <name>] [--temperature <0-2>] [--test-command <command>] [--max-rework <n>] [--config <path>] [--yes | --no-approve] [--actor-policy <path> --actor <id>] [--memory] [--skip-git-hooks]\n  forge-mind dag run --repos <a,b,c> --requirement <text> [--max-concurrency <n>] [--worktrees-root <path>] [--yes | --no-approve] [--actor-policy <path> --actor <id>]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n  forge-mind audit export --repo <path> --from <ISO> --to <ISO> --actor-policy <path> --actor <id> [--filter-actor <id>] [--filter-repo <path>] [--status <status>] [--format json|csv]\n\nEnvironment:\n  OPENAI_API_KEY                 Required for run\n  OPENAI_BASE_URL                OpenAI-compatible API base URL\n  FORGEMIND_MODEL                Default model name\n  FORGEMIND_TEMPERATURE          Optional provider compatibility override (0-2)\n  FORGEMIND_STRUCTURED_OUTPUT    Set 0 to disable native structured output\n  FORGEMIND_GLOBAL_CONFIG        Global policy config path\n  FORGEMIND_POLICY_JSON          Environment policy override\n`,
+    `ForgeMind\n\nUsage:\n  forge-mind web [--port <number>] [--config <path>]\n  forge-mind run --repo <path> --requirement <text> [--run-id <id> --resume] [--provider <id>] [--model <name>] [--temperature <0-2>] [--test-command <command>] [--max-rework <n>] [--config <path>] [--yes | --no-approve] [--skip-git-hooks]\n  forge-mind replay --repo <path> --run-id <id>\n  forge-mind report --repo <path> --run-id <id>\n\nEnvironment:\n  FORGEMIND_PROVIDER             Default provider (defaults to deepseek)\n  FORGEMIND_MODEL                Default model name (provider default if omitted)\n  OPENAI_API_KEY                 OpenAI/custom provider credential\n  DEEPSEEK_API_KEY               DeepSeek provider credential\n  BIGMODEL_API_KEY               BigModel provider credential\n  DASHSCOPE_API_KEY              DashScope provider credential\n  MOONSHOT_API_KEY               Moonshot provider credential\n  OPENAI_BASE_URL                Custom or legacy OpenAI-compatible API base URL\n  FORGEMIND_TEMPERATURE          Optional provider compatibility override (0-2)\n  FORGEMIND_STRUCTURED_OUTPUT    Set 0 to disable native structured output\n  FORGEMIND_GLOBAL_CONFIG        Global policy config path\n  FORGEMIND_POLICY_JSON          Environment policy override\n`,
   );
 }
 

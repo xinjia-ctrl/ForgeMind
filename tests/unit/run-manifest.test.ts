@@ -42,7 +42,6 @@ it("binds recovery to the generated acceptance contract and all runtime inputs",
     policyHash: "policy",
     testCommandHash: "test",
     budgetHash: "budget",
-    upstreamCommitHashes: ["upstream"],
   };
   const restored = manifestForContext(base, context);
 

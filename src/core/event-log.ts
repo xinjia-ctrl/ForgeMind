@@ -5,31 +5,18 @@ import type { EventInput, ForgeMindEvent } from "./events.js";
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 
-export interface EventLogIndex {
-  readonly parentRunId?: string;
-  readonly taskId?: string;
-}
-
 export class EventLog {
   readonly #filePath: string;
-  readonly #index: EventLogIndex;
   #nextSeq: number;
   #appendQueue: Promise<void> = Promise.resolve();
 
-  private constructor(filePath: string, index: EventLogIndex = {}, nextSeq = 1) {
+  private constructor(filePath: string, nextSeq = 1) {
     this.#filePath = filePath;
-    this.#index = index;
     this.#nextSeq = nextSeq;
   }
 
-  public static async create(
-    directory: string,
-    runId: string,
-    index: EventLogIndex = {},
-  ): Promise<EventLog> {
+  public static async create(directory: string, runId: string): Promise<EventLog> {
     assertValidRunId(runId);
-    if (index.parentRunId !== undefined) assertValidRunId(index.parentRunId);
-    if (index.taskId !== undefined) assertValidTaskId(index.taskId);
     await mkdir(directory, { recursive: true });
     const filePath = path.join(directory, `${runId}.jsonl`);
     try {
@@ -40,12 +27,12 @@ export class EventLog {
         cause: error,
       });
     }
-    return new EventLog(filePath, index);
+    return new EventLog(filePath);
   }
 
-  public static open(directory: string, runId: string, index: EventLogIndex = {}): EventLog {
+  public static open(directory: string, runId: string): EventLog {
     assertValidRunId(runId);
-    return new EventLog(path.join(directory, `${runId}.jsonl`), index, 0);
+    return new EventLog(path.join(directory, `${runId}.jsonl`), 0);
   }
 
   public get filePath(): string {
@@ -66,19 +53,12 @@ export class EventLog {
       const existing = await readEvents(this.#filePath);
       this.#nextSeq = (existing.at(-1)?.seq ?? 0) + 1;
     }
-    const data = {
-      ...input.data,
-      ...(this.#index.taskId === undefined ? {} : { taskId: this.#index.taskId }),
-      ...(input.type !== "run.started" || this.#index.parentRunId === undefined
-        ? {}
-        : { parentRunId: this.#index.parentRunId }),
-    };
     const event = {
       v: 1,
       seq: this.#nextSeq,
       ts: new Date().toISOString(),
       type: input.type,
-      data,
+      data: input.data,
     } as ForgeMindEvent;
 
     try {
@@ -123,12 +103,6 @@ async function readEvents(filePath: string): Promise<readonly ForgeMindEvent[]> 
 export function assertValidRunId(runId: string): void {
   if (!RUN_ID_PATTERN.test(runId)) {
     throw new FatalFailure(`Invalid run id: ${runId}`);
-  }
-}
-
-export function assertValidTaskId(taskId: string): void {
-  if (!RUN_ID_PATTERN.test(taskId)) {
-    throw new FatalFailure(`Invalid task id: ${taskId}`);
   }
 }
 

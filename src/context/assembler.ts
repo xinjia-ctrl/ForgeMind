@@ -1,10 +1,10 @@
 import { estimateTokens } from "../core/token-budget.js";
-import { keywords } from "../memory/keywords.js";
+import { keywords } from "./keywords.js";
 
 export interface ContextSection {
   readonly name: string;
   readonly content: string;
-  readonly source: "contract" | "retrieval" | "memory" | "rework";
+  readonly source: "contract" | "retrieval" | "rework";
   readonly trust?: "trusted" | "untrusted";
   readonly references?: readonly string[];
 }

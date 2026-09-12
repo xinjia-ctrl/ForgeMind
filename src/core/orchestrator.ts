@@ -6,33 +6,13 @@ import {
   throwIfCancelled,
 } from "./errors.js";
 import type { AgentFactory } from "./agent-factory.js";
-import {
-  withArchitecture,
-  withAcceptanceCriteria,
-  withArtifacts,
-  withAttempt,
-  withGate,
-  withPlan,
-  withUpdatedArchitecture,
-} from "./context.js";
+import { withArchitecture, withArtifacts, withAttempt, withGate, withPlan } from "./context.js";
 import type { EventLog } from "./event-log.js";
-import type { MemoryProvider } from "../memory/memory-provider.js";
-import { persistDecisionRecord } from "../negotiation/record.js";
-import { bindDecisionAcceptanceCriteria } from "../negotiation/acceptance.js";
-import {
-  detectArchitectureConflict,
-  detectRepeatedReviewRejection,
-} from "../negotiation/triggers.js";
-import type {
-  DecisionRecord,
-  NegotiationCoordinator,
-  NegotiationEvidence,
-} from "../negotiation/types.js";
 import { evaluateRunQuality } from "../quality/metrics.js";
 import { truncateUtf8 } from "./text.js";
 import { assertAcceptanceSatisfied } from "./acceptance.js";
 import type { RunCheckpoint, RunCheckpointStore, RunPhase } from "./run-checkpoint.js";
-import type { ArtifactRef, RunResult, RunStatus, StageId, TaskContext } from "./types.js";
+import type { RunResult, RunStatus, StageId, TaskContext } from "./types.js";
 import type { RunBudgetTracker } from "./run-budget.js";
 import { RunStopFailure } from "./run-budget.js";
 import { assertResumeManifest, manifestForContext, type RunManifest } from "./run-manifest.js";
@@ -45,11 +25,7 @@ const MAX_REWORK_CONTEXT_BYTES = 24_000;
 interface OrchestratorOptions {
   readonly eventLog: EventLog;
   readonly agentFactory: AgentFactory;
-  readonly memory: MemoryProvider;
   readonly maxRework?: number;
-  readonly actor?: { readonly id: string };
-  readonly negotiation?: NegotiationCoordinator;
-  readonly reviewNegotiationThreshold?: number;
   readonly signal?: AbortSignal;
   readonly checkpointStore?: RunCheckpointStore;
   readonly resume?: boolean;
@@ -63,11 +39,7 @@ interface OrchestratorOptions {
 export class Orchestrator {
   readonly #eventLog: EventLog;
   readonly #agentFactory: AgentFactory;
-  readonly #memory: MemoryProvider;
   readonly #maxRework: number;
-  readonly #actor: { readonly id: string } | undefined;
-  readonly #negotiation: NegotiationCoordinator | undefined;
-  readonly #reviewNegotiationThreshold: number;
   readonly #signal: AbortSignal | undefined;
   readonly #checkpointStore: RunCheckpointStore | undefined;
   readonly #resume: boolean;
@@ -80,11 +52,7 @@ export class Orchestrator {
   public constructor(options: OrchestratorOptions) {
     this.#eventLog = options.eventLog;
     this.#agentFactory = options.agentFactory;
-    this.#memory = options.memory;
     this.#maxRework = options.maxRework ?? DEFAULT_MAX_REWORK;
-    this.#actor = options.actor;
-    this.#negotiation = options.negotiation;
-    this.#reviewNegotiationThreshold = options.reviewNegotiationThreshold ?? 2;
     this.#signal = options.signal;
     this.#checkpointStore = options.checkpointStore;
     this.#resume = options.resume ?? false;
@@ -95,12 +63,6 @@ export class Orchestrator {
     this.#profileReason = options.profileReason;
     if (!Number.isInteger(this.#maxRework) || this.#maxRework < 0) {
       throw new FatalFailure("maxRework must be a non-negative integer");
-    }
-    if (
-      !Number.isInteger(this.#reviewNegotiationThreshold) ||
-      this.#reviewNegotiationThreshold < 2
-    ) {
-      throw new FatalFailure("reviewNegotiationThreshold must be an integer of at least 2");
     }
   }
 
@@ -128,7 +90,6 @@ export class Orchestrator {
           requirement: state.ctx.requirement,
           branch: state.ctx.repo.branch,
           repo: state.ctx.repo.path,
-          ...(this.#actor === undefined ? {} : { actor: this.#actor.id }),
           ...(this.#profile === undefined ? {} : { profile: this.#profile }),
           ...(this.#profileReason === undefined ? {} : { profileReason: this.#profileReason }),
         },
@@ -154,7 +115,6 @@ export class Orchestrator {
             const output = await this.executeStage("PLAN", 1, ctx);
             if (output.kind !== "plan") throw new FatalFailure("PLAN returned wrong output kind");
             const next = withPlan(ctx, output.plan, output.artifact);
-            await this.remember(next, [output.artifact]);
             state = {
               ...state,
               ctx: next,
@@ -165,30 +125,13 @@ export class Orchestrator {
             break;
           }
           case "ARCH": {
-            let ctx = withAttempt(state.ctx, "ARCH", 1);
+            const ctx = withAttempt(state.ctx, "ARCH", 1);
             const output = await this.executeStage("ARCH", 1, ctx);
             if (output.kind !== "architecture") {
               throw new FatalFailure("ARCH returned wrong output kind");
             }
-            ctx = withArchitecture(ctx, output.architecture, output.artifact);
-            const conflict = detectArchitectureConflict(output.architecture);
-            if (conflict !== null && this.#negotiation !== undefined) {
-              const record = await this.negotiate(ctx, conflict);
-              if (record === null) {
-                return await this.finish(
-                  ctx,
-                  "FAILED",
-                  "Architecture negotiation was not approved",
-                );
-              }
-              ctx = withAcceptanceCriteria(
-                ctx,
-                bindDecisionAcceptanceCriteria(record, ctx.plan?.acceptanceCriteria ?? []),
-              );
-              ctx = withUpdatedArchitecture(ctx, applyArchitectureDecision(ctx, record));
-            }
-            await this.remember(ctx, [output.artifact]);
-            state = { ...state, ctx, phase: "CODE", attempt: 1 };
+            const next = withArchitecture(ctx, output.architecture, output.artifact);
+            state = { ...state, ctx: next, phase: "CODE", attempt: 1 };
             await this.checkpoint(state);
             break;
           }
@@ -197,7 +140,6 @@ export class Orchestrator {
             const output = await this.executeStage("CODE", state.attempt, ctx, state.feedback);
             if (output.kind !== "code") throw new FatalFailure("CODE returned wrong output kind");
             const next = withArtifacts(ctx, output.artifacts);
-            await this.remember(next, output.artifacts);
             state = { ...state, ctx: next, phase: "TEST" };
             await this.checkpoint(state);
             break;
@@ -209,7 +151,6 @@ export class Orchestrator {
               throw new FatalFailure("REVIEW returned wrong output kind");
             }
             ctx = withGate(ctx, output.gate);
-            await this.#memory.rememberGate?.(ctx, output.gate);
             if (output.gate.passed) {
               assertAcceptanceSatisfied(ctx);
               state = { ...state, ctx, phase: "COMMIT", attempt: 1 };
@@ -227,30 +168,13 @@ export class Orchestrator {
                 ).message,
               );
             }
-            let reviewNegotiated = state.reviewNegotiated;
-            const decisions = [...state.negotiatedDecisions];
-            const repeated = detectRepeatedReviewRejection(ctx, this.#reviewNegotiationThreshold);
-            if (repeated !== null && this.#negotiation !== undefined && !reviewNegotiated) {
-              reviewNegotiated = true;
-              const record = await this.negotiate(ctx, repeated);
-              if (record === null) {
-                return await this.finish(ctx, "FAILED", "Review negotiation was not approved");
-              }
-              ctx = withAcceptanceCriteria(
-                ctx,
-                bindDecisionAcceptanceCriteria(record, ctx.plan?.acceptanceCriteria ?? []),
-              );
-              decisions.push(record.decision);
-            }
             state = {
               ...state,
               ctx,
               phase: "CODE",
               attempt: state.attempt + 1,
-              feedback: cumulativeReworkEvidence(history, decisions),
-              reviewNegotiated,
+              feedback: cumulativeReworkEvidence(history),
               reworkHistory: history,
-              negotiatedDecisions: decisions,
             };
             await this.checkpoint(state);
             break;
@@ -262,7 +186,6 @@ export class Orchestrator {
               throw new FatalFailure("TEST returned wrong output kind");
             }
             ctx = withGate(ctx, output.gate);
-            await this.#memory.rememberGate?.(ctx, output.gate);
             if (!output.gate.passed) {
               const history = [
                 ...state.reworkHistory,
@@ -283,7 +206,7 @@ export class Orchestrator {
                 ctx,
                 phase: "CODE",
                 attempt: state.attempt + 1,
-                feedback: cumulativeReworkEvidence(history, state.negotiatedDecisions),
+                feedback: cumulativeReworkEvidence(history),
                 reworkHistory: history,
               };
               await this.checkpoint(state);
@@ -300,7 +223,6 @@ export class Orchestrator {
               throw new FatalFailure("COMMIT returned wrong output kind");
             }
             const next = withArtifacts(ctx, [output.artifact]);
-            await this.remember(next, [output.artifact]);
             return await this.finish(next, "SUCCEEDED", `Created commit ${output.commit}`);
           }
         }
@@ -320,25 +242,6 @@ export class Orchestrator {
     return await agent.run({ attempt, ...(feedback === undefined ? {} : { feedback }) }, ctx);
   }
 
-  private async remember(ctx: TaskContext, artifacts: readonly ArtifactRef[]): Promise<void> {
-    for (const artifact of artifacts) await this.#memory.remember(ctx, artifact);
-  }
-
-  private async negotiate(
-    ctx: TaskContext,
-    evidence: NegotiationEvidence,
-  ): Promise<DecisionRecord | null> {
-    if (this.#negotiation === undefined) return null;
-    const negotiation = await this.#negotiation.negotiate({
-      runId: ctx.runId,
-      ...evidence,
-    });
-    if (negotiation.decisionRecord !== null) {
-      await persistDecisionRecord(this.#memory, negotiation.decisionRecord);
-    }
-    return negotiation.decisionRecord;
-  }
-
   private async checkpoint(state: OrchestratorState): Promise<void> {
     await this.#checkpointStore?.save({
       version: 1,
@@ -347,9 +250,7 @@ export class Orchestrator {
       attempt: state.attempt,
       context: state.ctx,
       ...(state.feedback === undefined ? {} : { feedback: state.feedback }),
-      reviewNegotiated: state.reviewNegotiated,
       reworkHistory: state.reworkHistory,
-      negotiatedDecisions: state.negotiatedDecisions,
       ...(this.#runBudget === undefined ? {} : { budget: this.#runBudget.snapshot() }),
       ...(this.#manifest === undefined
         ? {}
@@ -365,19 +266,9 @@ export class Orchestrator {
     });
     const quality = evaluateRunQuality(await this.#eventLog.load());
     await this.#eventLog.append({ type: "run.quality", data: quality });
-    await this.#memory.rememberQuality?.(quality);
     await this.#checkpointStore?.clear(ctx.runId);
     return { status, context: ctx, summary };
   }
-}
-
-function applyArchitectureDecision(ctx: TaskContext, record: DecisionRecord) {
-  if (ctx.architecture === null) throw new FatalFailure("Architecture decision is missing");
-  return {
-    ...ctx.architecture,
-    decisions: [...ctx.architecture.decisions, `Negotiated: ${record.decision}`],
-    summary: `${ctx.architecture.summary} Negotiated decision: ${record.decision}`,
-  };
 }
 
 function reworkEvidence(gate: {
@@ -408,9 +299,7 @@ interface OrchestratorState {
   readonly phase: RunPhase;
   readonly attempt: number;
   readonly feedback?: string;
-  readonly reviewNegotiated: boolean;
   readonly reworkHistory: readonly ReworkRecord[];
-  readonly negotiatedDecisions: readonly string[];
 }
 
 function initialState(ctx: TaskContext): OrchestratorState {
@@ -418,9 +307,7 @@ function initialState(ctx: TaskContext): OrchestratorState {
     ctx,
     phase: "PLAN",
     attempt: 1,
-    reviewNegotiated: false,
     reworkHistory: [],
-    negotiatedDecisions: [],
   };
 }
 
@@ -430,9 +317,7 @@ function stateFrom(checkpoint: RunCheckpoint): OrchestratorState {
     phase: checkpoint.phase,
     attempt: checkpoint.attempt,
     ...(checkpoint.feedback === undefined ? {} : { feedback: checkpoint.feedback }),
-    reviewNegotiated: checkpoint.reviewNegotiated,
     reworkHistory: checkpoint.reworkHistory,
-    negotiatedDecisions: checkpoint.negotiatedDecisions,
   };
 }
 
@@ -449,21 +334,12 @@ function assertResumeContext(requested: TaskContext, restored: TaskContext): voi
   }
 }
 
-function cumulativeReworkEvidence(
-  history: readonly ReworkRecord[],
-  negotiatedDecisions: readonly string[],
-): string {
+function cumulativeReworkEvidence(history: readonly ReworkRecord[]): string {
   const header = [
     "Cumulative rework contract (oldest retained issue to newest).",
     "Every item remains required: preserve earlier fixes while resolving the newest rejection.",
   ].join("\n");
-  const decisions = negotiatedDecisions.map((decision) => `Negotiated decision: ${decision}`);
-  const rawSuffix = decisions.length === 0 ? "" : `\n\n${decisions.join("\n")}`;
-  const suffix = truncateUtf8(
-    rawSuffix,
-    MAX_REWORK_CONTEXT_BYTES - Buffer.byteLength(header, "utf8"),
-  ).text;
-  const fixedBytes = Buffer.byteLength(`${header}${suffix}`, "utf8");
+  const fixedBytes = Buffer.byteLength(header, "utf8");
   let remainingBytes = Math.max(0, MAX_REWORK_CONTEXT_BYTES - fixedBytes);
   const retained: string[] = [];
 
@@ -482,5 +358,5 @@ function cumulativeReworkEvidence(
     if (bounded.truncated) break;
   }
 
-  return `${header}\n\n${retained.join("\n\n")}${suffix}`;
+  return `${header}\n\n${retained.join("\n\n")}`;
 }

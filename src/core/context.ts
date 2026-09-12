@@ -14,7 +14,6 @@ interface InitialContextOptions {
   readonly requirement: string;
   readonly requirementTrust?: "trusted" | "untrusted";
   readonly requiredAcceptanceCriteria?: readonly AcceptanceCriterion[];
-  readonly upstreamHandoffs?: TaskContext["upstreamHandoffs"];
   readonly repoPath: string;
   readonly branch: string;
   readonly tokenBudget: TokenBudgets;
@@ -28,9 +27,6 @@ export function createTaskContext(options: InitialContextOptions): TaskContext {
     ...(options.requiredAcceptanceCriteria === undefined
       ? {}
       : { requiredAcceptanceCriteria: [...options.requiredAcceptanceCriteria] }),
-    ...(options.upstreamHandoffs === undefined
-      ? {}
-      : { upstreamHandoffs: [...options.upstreamHandoffs] }),
     repo: { path: options.repoPath, branch: options.branch },
     plan: null,
     architecture: null,
@@ -67,27 +63,6 @@ export function withArchitecture(
     ...ctx,
     architecture,
     artifacts: [...ctx.artifacts, artifact],
-  });
-}
-
-export function withUpdatedArchitecture(ctx: TaskContext, architecture: ArchDecision): TaskContext {
-  return freezeContext({
-    ...ctx,
-    architecture,
-    artifacts: ctx.artifacts.map((artifact) =>
-      artifact.stage === "ARCH" ? { ...artifact, summary: architecture.summary } : artifact,
-    ),
-  });
-}
-
-export function withAcceptanceCriteria(
-  ctx: TaskContext,
-  acceptanceCriteria: readonly AcceptanceCriterion[],
-): TaskContext {
-  if (ctx.plan === null) throw new Error("Cannot update acceptance criteria without a plan");
-  return freezeContext({
-    ...ctx,
-    plan: { ...ctx.plan, acceptanceCriteria: [...acceptanceCriteria] },
   });
 }
 

@@ -1,10 +1,6 @@
-import { createHash } from "node:crypto";
-import { lstat, mkdir, realpath } from "node:fs/promises";
-import os from "node:os";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { HardFailure } from "../core/errors.js";
-import type { UpstreamHandoff } from "../core/types.js";
-import { assertValidRunId, assertValidTaskId } from "../core/event-log.js";
 import { runProcess } from "../tools/process.js";
 
 export interface GitWorkspace {
@@ -13,15 +9,6 @@ export interface GitWorkspace {
   readonly commonGitDirectory: string;
   readonly originalBranch: string;
   readonly branch: string;
-}
-
-export interface TaskWorktreeOptions {
-  readonly repositoryPath: string;
-  readonly parentRunId: string;
-  readonly taskId: string;
-  readonly runId: string;
-  readonly worktreesRoot?: string;
-  readonly baseRef?: string;
 }
 
 export async function prepareGitWorkspace(
@@ -39,79 +26,6 @@ export async function prepareGitWorkspace(
     throw new HardFailure(`Cannot create run branch ${branch}: ${switched.stderr.trim()}`);
   }
   return { ...inspected, branch };
-}
-
-export async function prepareTaskWorktree(options: TaskWorktreeOptions): Promise<GitWorkspace> {
-  assertValidRunId(options.parentRunId);
-  assertValidTaskId(options.taskId);
-  assertValidRunId(options.runId);
-  const inspected = await inspectGitWorkspace(options.repositoryPath);
-  await assertGitWorkspaceClean(inspected.root);
-  await assertGitWorkspaceHasCommit(inspected.root);
-  const branch = `forgemind/${options.runId}`;
-  const baseRef = options.baseRef ?? inspected.originalBranch;
-  if (baseRef === "test" || baseRef.endsWith(":test")) {
-    throw new HardFailure("The test branch cannot be used as a task worktree base");
-  }
-  const check = await git(inspected.root, ["check-ref-format", "--branch", branch]);
-  if (check.exitCode !== 0) throw new HardFailure(`Invalid run branch: ${branch}`);
-
-  const repositoryKey = createHash("sha256").update(inspected.root).digest("hex").slice(0, 12);
-  const requestedWorktreesRoot = path.resolve(
-    options.worktreesRoot ?? path.join(os.tmpdir(), "forgemind-worktrees"),
-  );
-  await mkdir(requestedWorktreesRoot, { recursive: true });
-  const worktreesRoot = await realpath(requestedWorktreesRoot);
-  assertWorktreesRootOutsideRepository(inspected.root, worktreesRoot);
-  const worktreePath = path.join(
-    worktreesRoot,
-    options.parentRunId,
-    `${path.basename(inspected.root)}-${repositoryKey}`,
-    options.taskId,
-  );
-  if (await pathExists(worktreePath)) {
-    throw new HardFailure(`Task worktree already exists: ${worktreePath}`);
-  }
-  await mkdir(path.dirname(worktreePath), { recursive: true });
-  const created = await git(inspected.root, [
-    "worktree",
-    "add",
-    "-b",
-    branch,
-    worktreePath,
-    baseRef,
-  ]);
-  if (created.exitCode !== 0) {
-    throw new HardFailure(`Cannot create task worktree ${worktreePath}: ${created.stderr.trim()}`);
-  }
-  const worktree = await inspectGitWorkspace(worktreePath);
-  if (worktree.originalBranch !== branch) {
-    throw new HardFailure(`Task worktree checked out unexpected branch ${worktree.originalBranch}`);
-  }
-  return {
-    ...worktree,
-    originalBranch: inspected.originalBranch,
-    branch,
-  };
-}
-
-export async function integrateTaskDependency(
-  workspaceRoot: string,
-  dependency: Pick<UpstreamHandoff, "taskId" | "branch" | "commit">,
-): Promise<void> {
-  if (dependency.branch === "test" || dependency.branch.endsWith(":test")) {
-    throw new HardFailure("The test branch cannot be merged into a task worktree");
-  }
-  if (!/^[a-f0-9]{7,64}$/i.test(dependency.commit)) {
-    throw new HardFailure(`Dependency ${dependency.taskId} has an invalid commit`);
-  }
-  const merged = await git(workspaceRoot, ["merge", "--no-edit", dependency.commit]);
-  if (merged.exitCode !== 0) {
-    await git(workspaceRoot, ["merge", "--abort"]);
-    throw new HardFailure(
-      `Cannot integrate dependency ${dependency.taskId}: ${merged.stderr.trim() || merged.stdout.trim()}`,
-    );
-  }
 }
 
 export async function inspectGitWorkspace(
@@ -163,25 +77,6 @@ export async function assertGitWorkspaceHasCommit(repositoryRoot: string): Promi
   const head = await git(repositoryRoot, ["rev-parse", "--verify", "HEAD"]);
   if (head.exitCode !== 0) {
     throw new HardFailure("Target repository must have at least one commit");
-  }
-}
-
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await lstat(target);
-    return true;
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
-
-function assertWorktreesRootOutsideRepository(repositoryRoot: string, worktreesRoot: string): void {
-  const relative = path.relative(repositoryRoot, worktreesRoot);
-  if (relative === "" || (!relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) {
-    throw new HardFailure("Task worktrees root must be outside the target repository");
   }
 }
 

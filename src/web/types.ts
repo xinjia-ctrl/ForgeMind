@@ -12,7 +12,6 @@ export interface WebRunRequest {
   readonly maxRework: number;
   readonly structuredOutput: boolean;
   readonly configPath?: string;
-  readonly memory: boolean;
   readonly approveAll: boolean;
 }
 

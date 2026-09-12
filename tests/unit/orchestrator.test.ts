@@ -10,14 +10,6 @@ import { DEFAULT_MAX_REWORK, Orchestrator } from "../../src/core/orchestrator.js
 import { FileRunCheckpointStore } from "../../src/core/run-checkpoint.js";
 import type { StageAgent, StageId, StageOutput } from "../../src/core/types.js";
 import { DEFAULT_TOKEN_BUDGETS } from "../../src/config/budgets.js";
-import { NoopMemoryProvider } from "../../src/memory/noop-memory-provider.js";
-import type { MemoryProvider } from "../../src/memory/memory-provider.js";
-import { createDecisionRecord } from "../../src/negotiation/record.js";
-import type {
-  DecisionRecord,
-  NegotiationCoordinator,
-  NegotiationRequest,
-} from "../../src/negotiation/types.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -173,79 +165,6 @@ describe("Orchestrator", () => {
     }, TypeError);
   });
 
-  it("negotiates once after repeated review rejection and returns the decision to CODE", async () => {
-    const negotiation = new StaticNegotiationCoordinator(
-      "Reduce the change to the affected boundary",
-    );
-    const memory = new CapturingMemory();
-    const fixture = await orchestratorFixture(
-      [
-        ["PLAN", planOutput()],
-        ["ARCH", architectureOutput()],
-        ["CODE", codeOutput("initial")],
-        ["TEST", testOutput(true, 1)],
-        ["REVIEW", reviewOutput(false, 1)],
-        ["CODE", codeOutput("first fix")],
-        ["TEST", testOutput(true, 2)],
-        ["REVIEW", reviewOutput(false, 2)],
-        ["CODE", codeOutput("negotiated fix")],
-        ["TEST", testOutput(true, 3)],
-        ["REVIEW", reviewOutput(true, 3, "No changes", true)],
-        ["COMMIT", commitOutput()],
-      ],
-      3,
-      { negotiation, memory },
-    );
-    const result = await fixture.orchestrator.run(fixture.context);
-    assert.equal(result.status, "SUCCEEDED");
-    assert.equal(negotiation.requests.length, 1);
-    assert.equal(negotiation.requests[0]?.trigger, "review-repeated-rejection");
-    assert.match(fixture.factory.feedbackSeen ?? "", /Negotiated decision: Reduce the change/);
-    assert.equal(memory.records.length, 1);
-    assert.equal(result.context.plan?.acceptanceCriteria.length, 2);
-  });
-
-  it("applies a resolved architecture conflict before CODE", async () => {
-    const negotiation = new StaticNegotiationCoordinator("Use the outer protocol service");
-    const fixture = await orchestratorFixture(
-      [
-        ["PLAN", planOutput()],
-        ["ARCH", architectureOutput(true)],
-        ["CODE", codeOutput("implemented")],
-        ["TEST", testOutput(true, 1)],
-        ["REVIEW", reviewOutput(true, 1, "No changes", true)],
-        ["COMMIT", commitOutput()],
-      ],
-      3,
-      { negotiation },
-    );
-    const result = await fixture.orchestrator.run(fixture.context);
-    assert.equal(result.status, "SUCCEEDED");
-    assert.equal(negotiation.requests[0]?.trigger, "arch-conflict");
-    assert.match(fixture.factory.architectureSeen ?? "", /Use the outer protocol service/);
-  });
-
-  it("blocks commit when negotiated verification evidence is missing", async () => {
-    const negotiation = new StaticNegotiationCoordinator("Use the outer protocol service");
-    const fixture = await orchestratorFixture(
-      [
-        ["PLAN", planOutput()],
-        ["ARCH", architectureOutput(true)],
-        ["CODE", codeOutput("implemented")],
-        ["TEST", testOutput(true, 1)],
-        ["REVIEW", reviewOutput(true, 1)],
-        ["COMMIT", commitOutput()],
-      ],
-      3,
-      { negotiation },
-    );
-
-    const result = await fixture.orchestrator.run(fixture.context);
-
-    assert.equal(result.status, "FAILED");
-    assert.match(result.summary, /missing verification evidence for AC-2/);
-  });
-
   it("checkpoints a cancellation and resumes from the next safe phase", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-resume-"));
     temporaryDirectories.push(directory);
@@ -277,7 +196,6 @@ describe("Orchestrator", () => {
         new Orchestrator({
           eventLog: firstLog,
           agentFactory: factory,
-          memory: new NoopMemoryProvider(),
           checkpointStore,
           signal: controller.signal,
         }).run(context),
@@ -289,7 +207,6 @@ describe("Orchestrator", () => {
     const result = await new Orchestrator({
       eventLog: EventLog.open(directory, "resume-run"),
       agentFactory: factory,
-      memory: new NoopMemoryProvider(),
       checkpointStore,
       resume: true,
     }).run(context);
@@ -299,14 +216,7 @@ describe("Orchestrator", () => {
   });
 });
 
-async function orchestratorFixture(
-  outputs: Array<readonly [StageId, StageOutput]>,
-  maxRework = 3,
-  options: {
-    readonly negotiation?: NegotiationCoordinator;
-    readonly memory?: MemoryProvider;
-  } = {},
-) {
+async function orchestratorFixture(outputs: Array<readonly [StageId, StageOutput]>, maxRework = 3) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-orchestrator-"));
   temporaryDirectories.push(directory);
   const eventLog = await EventLog.create(directory, "unit-run");
@@ -316,9 +226,7 @@ async function orchestratorFixture(
     orchestrator: new Orchestrator({
       eventLog,
       agentFactory: factory,
-      memory: options.memory ?? new NoopMemoryProvider(),
       maxRework,
-      ...(options.negotiation === undefined ? {} : { negotiation: options.negotiation }),
     }),
     context: createTaskContext({
       runId: "unit-run",
@@ -333,7 +241,6 @@ async function orchestratorFixture(
 class QueueAgentFactory implements AgentFactory {
   public feedbackSeen: string | undefined;
   public readonly feedbackHistory: string[] = [];
-  public architectureSeen: string | undefined;
 
   public constructor(
     private readonly queue: Array<readonly [StageId, StageOutput]>,
@@ -348,12 +255,11 @@ class QueueAgentFactory implements AgentFactory {
       id: stage,
       tools: [],
       lifecycle: "CREATED",
-      run: async (input, context) => {
+      run: async (input) => {
         if (stage === "CODE" && input.feedback !== undefined) {
           this.feedbackSeen = input.feedback;
           this.feedbackHistory.push(input.feedback);
         }
-        if (stage === "CODE") this.architectureSeen = context.architecture?.summary;
         this.afterStage?.(stage);
         return next[1];
       },
@@ -381,21 +287,13 @@ function planOutput(): StageOutput {
   };
 }
 
-function architectureOutput(withConflict = false): StageOutput {
+function architectureOutput(): StageOutput {
   return {
     kind: "architecture",
     architecture: {
       decisions: ["Reuse existing module"],
       files: [{ path: "src/index.ts", purpose: "Implementation" }],
       risks: ["Regression"],
-      ...(withConflict
-        ? {
-            alternatives: [
-              { position: "Use an outer protocol service", tradeoffs: ["Keeps agents uniform"] },
-              { position: "Extend stage agents", tradeoffs: ["Couples negotiation to stages"] },
-            ],
-          }
-        : {}),
       summary: "An architecture",
     },
     artifact: {
@@ -407,49 +305,6 @@ function architectureOutput(withConflict = false): StageOutput {
   };
 }
 
-class StaticNegotiationCoordinator implements NegotiationCoordinator {
-  public readonly requests: NegotiationRequest[] = [];
-
-  public constructor(private readonly decision: string) {}
-
-  public negotiate(request: NegotiationRequest) {
-    this.requests.push(request);
-    const round = {
-      round: 1 as const,
-      proposal: request.proposal,
-      counter: request.counter,
-      status: "CONVERGED" as const,
-    };
-    const record = createDecisionRecord({
-      runId: request.runId,
-      topic: request.topic,
-      trigger: request.trigger,
-      rounds: [round],
-      decision: this.decision,
-      escalated: false,
-      createdAt: "2026-08-14T00:00:00.000Z",
-    });
-    return Promise.resolve({
-      id: "negotiation-id",
-      runId: request.runId,
-      trigger: request.trigger,
-      topic: request.topic,
-      rounds: [round],
-      status: "RESOLVED" as const,
-      decisionRecord: record,
-    });
-  }
-}
-
-class CapturingMemory extends NoopMemoryProvider {
-  public readonly records: DecisionRecord[] = [];
-
-  public rememberDecisionRecord(record: DecisionRecord): Promise<void> {
-    this.records.push(record);
-    return Promise.resolve();
-  }
-}
-
 function codeOutput(summary: string): StageOutput {
   return {
     kind: "code",
@@ -458,12 +313,7 @@ function codeOutput(summary: string): StageOutput {
   };
 }
 
-function reviewOutput(
-  passed: boolean,
-  attempt: number,
-  feedback = "Fix the defect",
-  includeNegotiatedCriterion = false,
-): StageOutput {
+function reviewOutput(passed: boolean, attempt: number, feedback = "Fix the defect"): StageOutput {
   return {
     kind: "gate",
     gate: {
@@ -483,18 +333,6 @@ function reviewOutput(
           passed,
           details: passed ? "The diff and tests satisfy the criterion" : feedback,
         },
-        ...(includeNegotiatedCriterion
-          ? [
-              {
-                criterionId: "AC-2",
-                verifierKind: "review" as const,
-                source: "review:model",
-                artifactFingerprint: "fingerprint",
-                passed,
-                details: passed ? "The negotiated decision is satisfied" : feedback,
-              },
-            ]
-          : []),
       ],
     },
   };

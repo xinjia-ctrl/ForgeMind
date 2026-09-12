@@ -1,7 +1,7 @@
 {
   "name": "forgemind",
   "version": "3.0.0",
-  "description": "Evidence-gated multi-agent coding workflow orchestrator",
+  "description": "Evidence-gated coding agent for local Git repositories",
   "type": "module",
   "private": false,
   "files": [
@@ -13,8 +13,7 @@
     "docs/PRODUCT_MANUAL.md",
     "docs/EVALUATION.md",
     "docs/LIMITATIONS.md",
-    "docs/VISION.md",
-    "docs/history"
+    "docs/VISION.md"
   ],
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",

@@ -105,22 +105,9 @@ describe("report HTML rendering", () => {
     assert.doesNotMatch(tamperedHtml, /class="status [^"]*"\s+onmouseover=/i);
   });
 
-  it("renders memory, prompt governance, and context audit panels", () => {
+  it("renders prompt governance and context audit panels", () => {
     const model = buildReportViewModel([
-      event(1, "memory.recalled", {
-        runId: "panel-run",
-        stage: "ARCH",
-        scope: "project",
-        source: ".forgemind/memory/decisions.json",
-        entryId: "decision-router",
-        timestamp: "2000-01-01T00:00:00.000Z",
-        confidence: 0.8,
-        score: 3,
-        reason: "matched router <decision>",
-        content: "<redacted:20 bytes>",
-        used: true,
-      }),
-      event(2, "llm.called", {
+      event(1, "llm.called", {
         runId: "panel-run",
         stage: "ARCH",
         model: "test-model",
@@ -130,15 +117,15 @@ describe("report HTML rendering", () => {
         promptVersion: "architecture.v1",
         structuredOutput: true,
       }),
-      event(3, "context.assembled", {
+      event(2, "context.assembled", {
         runId: "panel-run",
         stage: "ARCH",
         sections: [
           {
-            name: "project memory",
-            source: "memory",
+            name: "workspace files",
+            source: "retrieval",
             tokenEstimate: 5,
-            references: [".forgemind/memory/decisions.json"],
+            references: ["src/router.ts"],
           },
         ],
         tokenEstimate: 5,
@@ -146,12 +133,10 @@ describe("report HTML rendering", () => {
     ]);
 
     const html = renderReportHtml(model);
-    assert.match(html, /MEMORY TRACE/);
     assert.match(html, /PROMPT GOVERNANCE/);
     assert.match(html, /CONTEXT AUDIT/);
     assert.match(html, /architecture\.v1/);
-    assert.match(html, /matched router &lt;decision&gt;/);
-    assert.doesNotMatch(html, /redacted:20/);
+    assert.match(html, /src\/router\.ts/);
   });
 
   it("renders evidence completeness, verification strength, coverage, and confidence", () => {

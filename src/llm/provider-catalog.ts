@@ -9,6 +9,8 @@ export const PROVIDER_IDS = [
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
+export const DEFAULT_PROVIDER_ID: ProviderId = "deepseek";
+
 export interface ProviderModelDefinition {
   readonly id: string;
   readonly label: string;
@@ -48,10 +50,10 @@ export const PROVIDER_CATALOG: readonly ProviderDefinition[] = [
     label: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
     apiKeyEnvironments: ["DEEPSEEK_API_KEY"],
-    defaultModel: "deepseek-v4-flash",
+    defaultModel: "deepseek-flash",
     models: [
-      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash · 推荐" },
-      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro · 高质量" },
+      { id: "deepseek-flash", label: "DeepSeek V4.1 Flash · 推荐" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro · 兼容过渡" },
     ],
     compatibility: "非思考模式 + JSON Object",
   },
@@ -128,7 +130,7 @@ export function configuredProviderId(
 }
 
 export function inferProviderId(baseUrl: string | undefined): ProviderId {
-  if (baseUrl === undefined || baseUrl.trim().length === 0) return "openai";
+  if (baseUrl === undefined || baseUrl.trim().length === 0) return DEFAULT_PROVIDER_ID;
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase();
     if (hostname === "api.openai.com") return "openai";
@@ -164,22 +166,15 @@ export function resolveProviderCredential(
 
   const legacyKey = nonEmpty(environment["OPENAI_API_KEY"]);
   if (legacyKey === undefined) return undefined;
-  const defaultProviderId = configuredProviderId(environment);
-  if (providerId === defaultProviderId) return legacyCredential();
-  if (providerId === "custom" && defaultProviderId === "openai") return legacyCredential();
-  if ((providerId === "openai" || providerId === "custom") && hasDedicatedDefaultKey()) {
+  if (providerId === "openai" || providerId === "custom") return legacyCredential();
+  const legacyBaseUrl = nonEmpty(environment["OPENAI_BASE_URL"]);
+  if (legacyBaseUrl !== undefined && inferProviderId(legacyBaseUrl) === providerId) {
     return legacyCredential();
   }
   return undefined;
 
   function legacyCredential(): ProviderCredential {
     return { apiKey: legacyKey as string, environment: "OPENAI_API_KEY" };
-  }
-
-  function hasDedicatedDefaultKey(): boolean {
-    return providerDefinition(defaultProviderId).apiKeyEnvironments.some(
-      (key) => key !== "OPENAI_API_KEY" && nonEmpty(environment[key]) !== undefined,
-    );
   }
 }
 

@@ -5,7 +5,6 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { EventLog } from "../../src/core/event-log.js";
 import type { ApprovalDecision, ApprovalGateway } from "../../src/policy/gateway.js";
-import type { ApprovalContext } from "../../src/auth/types.js";
 import { RulePolicyResolver } from "../../src/policy/resolver.js";
 import type { ActionRequest } from "../../src/policy/types.js";
 import { ScopedToolExecutor, ToolRegistry } from "../../src/tools/executor.js";
@@ -51,56 +50,7 @@ describe("tool approval audit", () => {
     }
   });
 
-  it("denies an underprivileged actor before calling the approval gateway", async () => {
-    const fixture = await createFixture("approve", "APPROVED", {
-      actor: { id: "dev", role: "developer", repos: ["/repo"] },
-      scope: { repo: "/repo" },
-      risk: "high",
-    });
-    try {
-      const result = await fixture.executor.execute("dangerous", {});
-      assert.equal(result.ok, false);
-      assert.equal(fixture.gateway.requests, 0);
-      assert.equal(fixture.tool.executions, 0);
-      const events = await fixture.log.load();
-      const rejected = events.find((event) => event.type === "approval.rejected");
-      assert.ok(rejected);
-      assert.equal(rejected.data.actor, "dev");
-      assert.equal(rejected.data.role, "developer");
-      assert.equal(rejected.data.decisionSource, "policy");
-    } finally {
-      await fixture.cleanup();
-    }
-  });
-
-  it("records an authorized actor and role on approval events", async () => {
-    for (const [role, risk, expectedGatewayRequests] of [
-      ["developer", "medium", 1],
-      ["approver", "high", 1],
-      ["viewer", "low", 0],
-    ] as const) {
-      const fixture = await createFixture("approve", "APPROVED", {
-        actor: { id: role, role, repos: ["/repo"] },
-        scope: { repo: "/repo" },
-        risk,
-      });
-      try {
-        const result = await fixture.executor.execute("dangerous", {});
-        assert.equal(result.ok, true);
-        assert.equal(fixture.gateway.requests, expectedGatewayRequests);
-        const events = await fixture.log.load();
-        const approved = events.find((event) => event.type === "approval.approved");
-        assert.ok(approved);
-        assert.equal(approved.data.actor, role);
-        assert.equal(approved.data.role, role);
-        assert.equal(approved.data.decisionSource, risk === "low" ? "config" : "auto");
-      } finally {
-        await fixture.cleanup();
-      }
-    }
-  });
-
-  it("records policy risk even when legacy callers do not provide an actor", async () => {
+  it("records policy risk on approval events", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-policy-risk-"));
     const log = await EventLog.create(directory, "policy-risk");
     try {
@@ -126,18 +76,13 @@ describe("tool approval audit", () => {
       const requested = (await log.load()).find((event) => event.type === "approval.requested");
       assert.ok(requested);
       assert.equal(requested.data.risk, "medium");
-      assert.equal(requested.data.actor, undefined);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
 });
 
-async function createFixture(
-  mode: "approve" | "deny",
-  decision: ApprovalDecision,
-  approvalContext?: ApprovalContext,
-) {
+async function createFixture(mode: "approve" | "deny", decision: ApprovalDecision) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forgemind-approval-"));
   const log = await EventLog.create(directory, `approval-${mode}`);
   const tool = new CountingTool();
@@ -160,7 +105,6 @@ async function createFixture(
       }),
       policyResolver: new RulePolicyResolver("deny", [{ match: { tool: "dangerous" }, mode }]),
       approvalGateway: gateway,
-      ...(approvalContext === undefined ? {} : { approvalContext }),
     }),
     cleanup: () => rm(directory, { recursive: true, force: true }),
   };
@@ -172,7 +116,7 @@ class FakeGateway implements ApprovalGateway {
 
   public constructor(private readonly decision: ApprovalDecision) {}
 
-  public request(_action: ActionRequest, _context?: ApprovalContext): Promise<ApprovalDecision> {
+  public request(_action: ActionRequest): Promise<ApprovalDecision> {
     this.requests += 1;
     return Promise.resolve(this.decision);
   }

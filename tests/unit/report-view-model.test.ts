@@ -154,48 +154,6 @@ describe("report view model", () => {
     assert.equal(report.stats.perStage.find((stats) => stats.stage === "CODE")?.durationMs, null);
   });
 
-  it("projects bounded negotiation events into the auditable timeline", () => {
-    const report = buildReportViewModel([
-      event(1, "negotiation.started", {
-        runId: "negotiation-report-run",
-        negotiationId: "negotiation-id",
-        trigger: "review-repeated-rejection",
-        topic: "Resolve repeated review feedback",
-      }),
-      event(2, "negotiation.round", {
-        runId: "negotiation-report-run",
-        negotiationId: "negotiation-id",
-        round: 1,
-        status: "CONVERGED",
-        proposal: "<redacted>",
-        counter: "<redacted>",
-      }),
-      event(3, "negotiation.resolved", {
-        runId: "negotiation-report-run",
-        negotiationId: "negotiation-id",
-        decisionRecordId: "decision-id",
-        decision: "<redacted>",
-      }),
-    ]);
-    const timeline = report.timeline.flatMap((group) => group.events);
-    assert.deepEqual(
-      timeline.map((item) => [item.type, item.outcome]),
-      [
-        ["negotiation.started", "started"],
-        ["negotiation.round", "CONVERGED"],
-        ["negotiation.resolved", "resolved"],
-      ],
-    );
-    assert.deepEqual(timeline[1]?.details, {
-      runId: "negotiation-report-run",
-      negotiationId: "negotiation-id",
-      round: 1,
-      status: "CONVERGED",
-      proposal: "<redacted>",
-      counter: "<redacted>",
-    });
-  });
-
   it("projects the auditable run quality assessment", () => {
     const report = buildReportViewModel([
       event(1, "run.quality", {
@@ -238,8 +196,6 @@ describe("report view model", () => {
         action: { args: { content: "PRIVATE" } },
         policy: "rule:8:approve",
         mode: "approve",
-        actor: "alice",
-        role: "approver",
       }),
       event(2, "approval.approved", {
         runId: "security-run",
@@ -249,8 +205,6 @@ describe("report view model", () => {
         policy: "rule:8:approve",
         mode: "approve",
         decisionSource: "auto",
-        actor: "alice",
-        role: "approver",
       }),
     ]);
 
@@ -262,38 +216,11 @@ describe("report view model", () => {
       ],
     );
     assert.doesNotMatch(JSON.stringify(report.security), /PRIVATE/);
-    assert.deepEqual(
-      report.security.map((item) => [item.actor, item.role]),
-      [
-        ["alice", "approver"],
-        ["alice", "approver"],
-      ],
-    );
   });
 
-  it("projects memory, prompt versions, and source-labelled context without content", () => {
+  it("projects prompt versions and source-labelled context", () => {
     const report = buildReportViewModel([
-      event(1, "memory.recalled", {
-        runId: "intelligence-run",
-        stage: "PLAN",
-        scope: "episodic",
-        source: "runs/previous.jsonl",
-        entryId: "previous-run",
-        timestamp: "2000-01-01T00:00:00.000Z",
-        confidence: 0.7,
-        score: 1.25,
-        reason: "requirement overlap: health",
-        content: "<redacted:42 bytes>",
-        used: true,
-      }),
-      event(2, "memory.stored", {
-        runId: "intelligence-run",
-        stage: "ARCH",
-        scope: "project",
-        kind: "decision",
-        path: ".forgemind/memory/decisions.json",
-      }),
-      event(3, "context.assembled", {
+      event(1, "context.assembled", {
         runId: "intelligence-run",
         stage: "CODE",
         sections: [
@@ -306,7 +233,7 @@ describe("report view model", () => {
         ],
         tokenEstimate: 128,
       }),
-      event(4, "llm.called", {
+      event(2, "llm.called", {
         runId: "intelligence-run",
         stage: "CODE",
         model: "test-model",
@@ -318,16 +245,9 @@ describe("report view model", () => {
       }),
     ]);
 
-    assert.deepEqual(
-      report.memory.map((item) => [item.operation, item.scope, item.source, item.used]),
-      [
-        ["RECALLED", "episodic", "runs/previous.jsonl", true],
-        ["STORED", "project", ".forgemind/memory/decisions.json", undefined],
-      ],
-    );
     assert.deepEqual(report.prompts, [
       {
-        seq: 4,
+        seq: 2,
         stage: "CODE",
         model: "test-model",
         version: "code.v1",
@@ -335,7 +255,6 @@ describe("report view model", () => {
       },
     ]);
     assert.equal(report.contexts[0]?.sections[0]?.references[0], "src/router.ts");
-    assert.doesNotMatch(JSON.stringify(report), /redacted:42/);
   });
 
   it("keeps historical failures honest and handles an empty log", () => {

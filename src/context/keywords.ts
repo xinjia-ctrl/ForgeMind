@@ -9,8 +9,3 @@ export function keywords(value: string): readonly string[] {
     ),
   ];
 }
-
-export function keywordOverlap(left: string, right: string): readonly string[] {
-  const rightTerms = new Set(keywords(right));
-  return keywords(left).filter((term) => rightTerms.has(term));
-}

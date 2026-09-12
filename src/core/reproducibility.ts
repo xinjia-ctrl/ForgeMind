@@ -14,42 +14,6 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
     .sort((left, right) => left.seq - right.seq)
     .map((event): WorkflowTraceStep => {
       switch (event.type) {
-        case "development.received":
-          return {
-            type: event.type,
-            operation: event.data.developmentType,
-            outcome: "received",
-          };
-        case "trigger.decided":
-          return {
-            type: event.type,
-            operation: event.data.ruleId ?? event.data.eventId,
-            outcome: event.data.decision,
-          };
-        case "negotiation.started":
-          return {
-            type: event.type,
-            operation: event.data.trigger,
-            outcome: "started",
-          };
-        case "negotiation.round":
-          return {
-            type: event.type,
-            operation: event.data.negotiationId,
-            outcome: event.data.status,
-          };
-        case "negotiation.resolved":
-          return {
-            type: event.type,
-            operation: event.data.negotiationId,
-            outcome: "resolved",
-          };
-        case "negotiation.escalated":
-          return {
-            type: event.type,
-            operation: event.data.negotiationId,
-            outcome: event.data.approved ? "approved" : "denied",
-          };
         case "run.started":
           return { type: event.type };
         case "run.resumed":
@@ -58,24 +22,6 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
             stage: event.data.phase,
             attempt: event.data.attempt,
             outcome: "resumed",
-          };
-        case "task.started":
-          return {
-            type: event.type,
-            operation: event.data.taskId,
-            outcome: "started",
-          };
-        case "task.completed":
-          return {
-            type: event.type,
-            operation: event.data.taskId,
-            outcome: "SUCCEEDED",
-          };
-        case "task.failed":
-          return {
-            type: event.type,
-            operation: event.data.taskId,
-            outcome: event.data.status,
           };
         case "stage.started":
           return {
@@ -88,20 +34,6 @@ export function workflowTrace(events: readonly ForgeMindEvent[]): readonly Workf
             type: event.type,
             stage: event.data.stage,
             operation: event.data.model,
-          };
-        case "memory.recalled":
-          return {
-            type: event.type,
-            stage: event.data.stage,
-            operation: event.data.scope,
-            outcome: event.data.used ? "used" : "skipped",
-          };
-        case "memory.stored":
-          return {
-            type: event.type,
-            stage: event.data.stage,
-            operation: event.data.kind,
-            outcome: "stored",
           };
         case "context.assembled":
           return {

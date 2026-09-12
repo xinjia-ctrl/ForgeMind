@@ -93,15 +93,6 @@ export class ReviewAgent extends BaseAgent {
         source: "contract",
         trust: "untrusted",
       },
-      {
-        name: "Upstream handoff evidence",
-        content:
-          (ctx.upstreamHandoffs ?? [])
-            .map((handoff) => `${handoff.taskId}@${handoff.commit}: ${handoff.summary}`)
-            .join("\n") || "none",
-        source: "retrieval",
-        references: (ctx.upstreamHandoffs ?? []).map((handoff) => handoff.commit),
-      },
       { name: "Reviewed diff", content: diff, source: "retrieval", references: ["git diff"] },
     ]);
     const approved = requiredBoolean(response, "approved");

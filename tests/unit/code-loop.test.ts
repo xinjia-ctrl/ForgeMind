@@ -9,7 +9,6 @@ import { testSuiteCriterion } from "../../src/core/acceptance.js";
 import { createTaskContext, withPlan } from "../../src/core/context.js";
 import { EventLog } from "../../src/core/event-log.js";
 import { FakeChatProvider } from "../../src/llm/fake-provider.js";
-import { NoopMemoryProvider } from "../../src/memory/noop-memory-provider.js";
 import { AutoApprovalGateway } from "../../src/policy/auto-gateway.js";
 import { RulePolicyResolver } from "../../src/policy/resolver.js";
 import type { ProcessRunner } from "../../src/sandbox/types.js";
@@ -164,6 +163,35 @@ describe("bounded CodeAgent loop", () => {
 
     assert.equal(output.kind, "code");
     assert.equal(runner.calls, 2);
+    assert.equal(fixture.provider.calls.length, 3);
+  });
+
+  it("advances to independent gates after a changed workspace passes a final fast check", async () => {
+    const runner = new SequenceRunner([processResult(0, "tests pass", "")]);
+    const fixture = await createFixture(
+      [
+        response(
+          [],
+          [
+            {
+              kind: "edit",
+              path: "example.js",
+              oldText: "export const value = 1;",
+              newText: "export const value = 2;",
+            },
+            { kind: "fast-check", checkId: "primary" },
+          ],
+          "Implement and verify the requested value",
+        ),
+      ],
+      { runner },
+    );
+
+    const output = await fixture.agent.run({ attempt: 1 }, fixture.context);
+
+    assert.equal(output.kind, "code");
+    assert.match(output.summary, /independent TEST and REVIEW/);
+    assert.equal(fixture.provider.calls.length, 1);
   });
 
   it("stops at the configured step and token budgets", async () => {
@@ -282,7 +310,6 @@ async function createFixture(
     eventLog,
     toolExecutor: executor,
     budget: options.budget ?? DEFAULT_TOKEN_BUDGETS.CODE,
-    memory: new NoopMemoryProvider(),
     fastChecks: { primary: ["npm", "test"] },
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
   });

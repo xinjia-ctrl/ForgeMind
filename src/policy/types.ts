@@ -1,5 +1,6 @@
 import type { StageId } from "../core/types.js";
-import type { RiskLevel } from "../auth/types.js";
+
+export type RiskLevel = "low" | "medium" | "high";
 
 export type PolicyMode = "allow" | "approve" | "deny";
 

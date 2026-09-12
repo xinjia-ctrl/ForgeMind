@@ -29,7 +29,7 @@ describe("ForgeMind local web workspace", () => {
       environment: {
         DEEPSEEK_API_KEY: "never-return-this-secret",
         FORGEMIND_PROVIDER: "deepseek",
-        FORGEMIND_MODEL: "deepseek-v4-flash",
+        FORGEMIND_MODEL: "deepseek-flash",
         FORGEMIND_TEMPERATURE: "0.01",
         FORGEMIND_MAX_REWORK: "8",
         FORGEMIND_STRUCTURED_OUTPUT: "0",
@@ -58,7 +58,7 @@ describe("ForgeMind local web workspace", () => {
       const defaults = await localJson(server, "GET", "/api/config");
       assert.equal(defaults["providerId"], "deepseek");
       assert.equal(defaults["baseUrl"], "https://api.deepseek.com");
-      assert.equal(defaults["model"], "deepseek-v4-flash");
+      assert.equal(defaults["model"], "deepseek-flash");
       assert.equal(defaults["temperature"], 0.01);
       assert.equal(defaults["maxRework"], 8);
       assert.equal(defaults["structuredOutput"], false);
@@ -66,7 +66,7 @@ describe("ForgeMind local web workspace", () => {
       assert.equal(deepSeek["apiKeyEnvironment"], "DEEPSEEK_API_KEY");
       assert.equal(deepSeek["apiKeyConfigured"], true);
       assert.equal(providerOption(defaults, "openai")["apiKeyConfigured"], false);
-      assert.ok(modelIds(deepSeek).includes("deepseek-v4-flash"));
+      assert.ok(modelIds(deepSeek).includes("deepseek-flash"));
       assert.ok(providerIds(defaults).includes("deepseek"));
       assert.ok(providerIds(defaults).includes("dashscope"));
       assert.ok(providerIds(defaults).includes("moonshot"));
@@ -94,11 +94,10 @@ describe("ForgeMind local web workspace", () => {
         requirement: "Add a subtraction function with tests",
         providerId: "deepseek",
         baseUrl: "https://api.deepseek.com/",
-        model: "deepseek-v4-flash",
+        model: "deepseek-flash",
         temperature: 0.01,
         maxRework: 8,
         structuredOutput: true,
-        memory: false,
         approveAll: true,
       };
       const startedResponse = await localRequest(server, "POST", "/api/runs", request);
@@ -135,6 +134,17 @@ describe("ForgeMind local web workspace", () => {
     }
   });
 
+  it("defaults to DeepSeek V4.1 Flash without an explicit provider or model", async () => {
+    const server = createWebApp({
+      environment: { DEEPSEEK_API_KEY: "deepseek-secret" },
+    });
+    const defaults = await localJson(server, "GET", "/api/config");
+
+    assert.equal(defaults["providerId"], "deepseek");
+    assert.equal(defaults["baseUrl"], "https://api.deepseek.com");
+    assert.equal(defaults["model"], "deepseek-flash");
+  });
+
   it("strictly parses local web run configuration without exposing the environment key", () => {
     const parsed = parseWebRunRequest(
       {
@@ -146,7 +156,6 @@ describe("ForgeMind local web workspace", () => {
         temperature: 0.25,
         maxRework: 9,
         structuredOutput: false,
-        memory: true,
         approveAll: true,
       },
       { OPENAI_API_KEY: "environment-secret" },
@@ -166,7 +175,6 @@ describe("ForgeMind local web workspace", () => {
       model: parsed.model,
       maxRework: parsed.maxRework,
       structuredOutput: parsed.structuredOutput,
-      memory: parsed.memory,
       approveAll: parsed.approveAll,
     };
     assert.throws(
@@ -205,11 +213,10 @@ describe("ForgeMind local web workspace", () => {
       requirement: "Fix tests",
       providerId: "deepseek",
       baseUrl: "https://api.deepseek.com",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       temperature: 0,
       maxRework: 6,
       structuredOutput: true,
-      memory: false,
       approveAll: true,
     };
     const parsed = parseWebRunRequest(request, {

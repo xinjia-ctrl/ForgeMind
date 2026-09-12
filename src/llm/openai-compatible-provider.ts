@@ -69,9 +69,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
     messages: readonly ChatMessage[],
     options: ChatOptions,
   ): Promise<ChatCompletion> {
-    const deepSeekV4 = usesDeepSeekV4Compatibility(this.#baseUrl, options.model);
+    const deepSeek = usesDeepSeekCompatibility(this.#baseUrl);
     const bigModelGlm = usesBigModelGlmCompatibility(this.#baseUrl, options.model);
-    const disableThinking = deepSeekV4 || bigModelGlm;
+    const disableThinking = deepSeek || bigModelGlm;
     const usesJsonObject = disableThinking || usesDashScopeJsonObject(this.#baseUrl, options.model);
     const requestBody = JSON.stringify({
       model: options.model,
@@ -178,14 +178,10 @@ interface ResponseBody {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
-function usesDeepSeekV4Compatibility(baseUrl: string, model: string): boolean {
+function usesDeepSeekCompatibility(baseUrl: string): boolean {
   try {
     const endpoint = new URL(baseUrl);
-    return (
-      endpoint.protocol === "https:" &&
-      endpoint.hostname === "api.deepseek.com" &&
-      /^deepseek-v4-(?:flash|pro)$/.test(model)
-    );
+    return endpoint.protocol === "https:" && endpoint.hostname === "api.deepseek.com";
   } catch {
     return false;
   }

@@ -269,7 +269,6 @@ export function parseWebRunRequest(
     "maxRework",
     "structuredOutput",
     "configPath",
-    "memory",
     "approveAll",
   ]);
   const providerIdValue = requiredStringField(record, "providerId", 64);
@@ -310,7 +309,6 @@ export function parseWebRunRequest(
     maxRework,
     structuredOutput: booleanField(record, "structuredOutput"),
     ...(configPath === undefined ? {} : { configPath }),
-    memory: booleanField(record, "memory"),
     approveAll: booleanField(record, "approveAll"),
   };
 }
@@ -333,7 +331,6 @@ async function executeWebRun(options: WebRunExecutorOptions): Promise<WebRunResu
     runId: options.runId,
     maxRework: options.request.maxRework,
     ...(options.request.configPath === undefined ? {} : { configPath: options.request.configPath }),
-    memory: options.request.memory,
     approveAll: options.request.approveAll,
     noApprove: !options.request.approveAll,
   });
